@@ -13,5 +13,6 @@ export default defineSchema({
     chunkText: v.string(),
     chunkIndex: v.number(),
     embedding: v.array(v.float64()),
-  }).index("documentId", ["documentId"]),
+  })
+    .index("documentId", ["documentId"]),
 });
