@@ -10,6 +10,7 @@
 
 import type * as chunks from "../chunks.js";
 import type * as documents from "../documents.js";
+import type * as upload from "../upload.js";
 
 import type {
   ApiFromModules,
@@ -20,6 +21,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   chunks: typeof chunks;
   documents: typeof documents;
+  upload: typeof upload;
 }>;
 
 /**
