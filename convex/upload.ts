@@ -30,6 +30,7 @@ export const uploadPDF = mutation({
     return {
       documentId,
       chunkCount: chunks.length,
+      textLength: text.length,
     };
   },
 });
