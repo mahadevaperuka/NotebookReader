@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as chatIndex from "../chatIndex.js";
+import type * as chats from "../chats.js";
 import type * as chunks from "../chunks.js";
 import type * as documents from "../documents.js";
 import type * as upload from "../upload.js";
@@ -19,6 +21,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  chatIndex: typeof chatIndex;
+  chats: typeof chats;
   chunks: typeof chunks;
   documents: typeof documents;
   upload: typeof upload;
