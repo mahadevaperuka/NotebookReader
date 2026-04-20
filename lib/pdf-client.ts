@@ -1,10 +1,16 @@
 "use client";
 
-import * as pdfjs from "pdfjs-dist";
-
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-
 export async function extractTextFromPDF(file: File): Promise<string> {
+  if (typeof window === "undefined") {
+    throw new Error("PDF extraction requires browser environment");
+  }
+  
+  const pdfjs = await import("pdfjs-dist");
+  
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+  }
+  
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   

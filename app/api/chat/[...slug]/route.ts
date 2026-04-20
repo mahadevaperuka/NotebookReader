@@ -3,6 +3,9 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../convex/_generated/api";
 import { streamChat, ChatMessage } from "../../../../lib/agent";
 
+// Prevent Next.js from caching or buffering this route
+export const dynamic = "force-dynamic";
+
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
@@ -19,12 +22,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       });
     }
 
-    let conversationHistory: ChatMessage[] = messages.slice(0, -1).map((m: any) => ({
-      role: m.role as "user" | "assistant",
+    let conversationHistory: ChatMessage[] = messages.slice(0, -1).map((m) => ({
+      role: m.role,
       content: m.content,
     }));
-    let currentMessages = messages.slice(-1).map((m: any) => ({
-      role: m.role as "user" | "assistant",
+    const currentMessages = messages.slice(-1).map((m) => ({
+      role: m.role,
       content: m.content,
     }));
 
@@ -47,19 +50,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       isMain,
     };
 
+    // Use proper SSE format (data: {...}\n\n) which Turbopack's dev proxy
+    // recognizes and flushes immediately, unlike raw NDJSON which gets buffered.
+    const iterator = streamChat(currentMessages, context)[Symbol.asyncIterator]();
     const encoder = new TextEncoder();
+
     const stream = new ReadableStream({
-      async start(controller) {
+      async pull(controller) {
         try {
-          for await (const chunk of streamChat(currentMessages, context)) {
-            const data = JSON.stringify(chunk) + "\n";
-            controller.enqueue(encoder.encode(data));
+          const { done, value } = await iterator.next();
+          if (done) {
+            // Send SSE close event
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+            return;
           }
-          controller.close();
+          // SSE format: "data: <json>\n\n" — the double newline is the event delimiter
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(value)}\n\n`));
         } catch (error) {
           controller.enqueue(
-            encoder.encode(JSON.stringify({ type: "error", content: "Stream failed: " + String(error) }) + "\n")
+            encoder.encode(`data: ${JSON.stringify({ type: "error", content: "Stream failed: " + String(error) })}\n\n`)
           );
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.close();
         }
       },
@@ -67,8 +79,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     return new Response(stream, {
       headers: {
-        "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (error) {
@@ -79,3 +93,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     });
   }
 }
+

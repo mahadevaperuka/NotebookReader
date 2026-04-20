@@ -41,13 +41,6 @@ export async function POST(req: NextRequest) {
 
     await convex.mutation(api.chunks.createMany, { chunks: chunksWithEmbeddings });
 
-    if (chatId) {
-      await convex.mutation(api.chats.addDocument, {
-        chatId: chatId as any,
-        documentId,
-      });
-    }
-
     const keywordsPrompt = `Extract 5-10 keywords from this document that would help identify what topics were discussed. Return just a comma-separated list of keywords.
 
 Document content preview:

@@ -87,18 +87,14 @@ async function* handleListDocuments(documentIds: string[]) {
   try {
     let documents;
     if (documentIds.length > 0) {
-      documents = await Promise.all(
-        documentIds.map((id) => convex.query(api.documents.getById, { id } as any))
-      );
+     documents = await Promise.all(
+       documentIds.map((id) => convex.query(api.documents.getById, { id }))
+     );
     } else {
       documents = await convex.query(api.documents.list, {});
     }
 
-    const docs = documents.filter(Boolean) as Array<{
-      _id: string;
-      filename: string;
-      uploadedAt: number;
-    }>;
+     const docs = documents.filter(Boolean);
 
     if (docs.length === 0) {
       yield { type: "message", content: "No documents in this chat yet. Add a document to get started!" };
@@ -127,10 +123,10 @@ async function* handleDocumentSearch(
 
     let documentIds = context.documentIds;
     
-    if (documentIds.length === 0) {
-      const allDocs = await convex.query(api.documents.list, {});
-      documentIds = allDocs.map((d: any) => d._id);
-    }
+     if (documentIds.length === 0) {
+       const allDocs = await convex.query(api.documents.list, {});
+       documentIds = allDocs.map((d) => d._id);
+     }
 
     if (documentIds.length === 0) {
       yield {
@@ -140,24 +136,30 @@ async function* handleDocumentSearch(
       return;
     }
 
-    let chunks: any[] = [];
+     let chunks: Array<{
+       _id: string;
+       documentId: string;
+       chunkText: string;
+       chunkIndex: number;
+       embedding: number[];
+     }> = [];
     for (const docId of documentIds) {
-      const docChunks = await convex.query(api.chunks.listByDocument, { documentId: docId as any });
+      const docChunks = await convex.query(api.chunks.listByDocument, { documentId: docId });
       chunks = [...chunks, ...docChunks];
     }
 
     const queryEmbedding = await generateEmbedding(query);
 
-    const results = chunks
-      .map((chunk) => ({
-        ...chunk,
-        similarity: chunk.embedding?.length > 0
-          ? cosineSimilarity(queryEmbedding, chunk.embedding)
-          : 0,
-      }))
-      .filter((chunk) => chunk.similarity > 0.1)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 5);
+     const results = chunks
+       .map((chunk) => {
+         const similarity = chunk.embedding && chunk.embedding.length > 0
+           ? cosineSimilarity(queryEmbedding, chunk.embedding)
+           : 0;
+         return { ...chunk, similarity };
+       })
+       .filter((chunk) => chunk.similarity > 0.1)
+       .sort((a, b) => b.similarity - a.similarity)
+       .slice(0, 5);
 
     if (results.length === 0) {
       yield {
@@ -214,36 +216,34 @@ Answer:`;
       throw new Error("No response body");
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+     const reader = response.body.getReader();
+     const decoder = new TextDecoder();
+     let buffer = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+       while (true) {
+         const { done, value } = await reader.read();
+         if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+         buffer += decoder.decode(value, { stream: true });
+         const lines = buffer.split("\n");
+         buffer = lines.pop() || "";
 
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6);
-          if (data === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.response) {
-              yield { type: "token", content: parsed.response };
-            }
-          } catch {}
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Chat error:", error);
-    yield { type: "error", content: "Sorry, I encountered an error processing your request." };
-  }
-}
+         for (const line of lines) {
+           if (line.trim()) {
+             try {
+               const parsed = JSON.parse(line);
+               if (parsed.response) {
+                 yield { type: "token", content: parsed.response };
+               }
+             } catch {}
+           }
+         }
+       }
+   } catch (error) {
+     console.error("Chat error:", error);
+     yield { type: "error", content: "Sorry, I encountered an error processing your request." };
+   }
+ }
 
 async function* handleGeneralChat(message: string, conversationHistory: ChatMessage[]) {
   const contextHistory = conversationHistory
@@ -258,18 +258,12 @@ ${contextHistory ? `Recent conversation:\n${contextHistory}\n` : ""}User: ${mess
 Respond helpfully. If they want to ask questions about documents, encourage them to create a chat and add documents to it.`;
 
   try {
-    const fullPrompt = `You are a helpful assistant for a document question-answering system.
-
-${contextHistory ? `Recent conversation:\n${contextHistory}\n` : ""}User: ${message}
-
-Respond helpfully. If they want to ask questions about documents, encourage them to create a chat and add documents to it.`;
-
     const response = await fetch("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "llama3.2",
-        prompt: fullPrompt,
+        prompt,
         stream: true,
       }),
     });
@@ -280,13 +274,16 @@ Respond helpfully. If they want to ask questions about documents, encourage them
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const text = decoder.decode(value, { stream: true });
-      const lines = text.split("\n");
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -429,18 +426,16 @@ Otherwise, end with a helpful prompt like "Which chat would you like to switch t
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.response) {
-                yield { type: "token", content: parsed.response };
-              }
-            } catch {}
-          }
-        }
+       for (const line of lines) {
+         if (line.trim()) {
+           try {
+             const parsed = JSON.parse(line);
+             if (parsed.response) {
+               yield { type: "token", content: parsed.response };
+             }
+           } catch {}
+         }
+       }
       }
     } catch (error) {
       console.error("Main chat search error:", error);

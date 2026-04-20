@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ["pdf-parse", "pdfjs-dist"],
-  },
+  serverExternalPackages: ["pdfjs-dist"],
+  compress: false,
 };
 
 export default nextConfig;

@@ -97,9 +97,13 @@ export default function ChatPage() {
     setChat({ ...chat!, messages: newMessages as any });
 
     try {
+      let fullContent = "";
+      
       const response = await fetch(`/api/chat/${chatId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           messages: [{ role: "user", content: userMessage }],
           documentIds: chat?.documents?.map((d: any) => d._id) || [],
@@ -107,8 +111,6 @@ export default function ChatPage() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("[frontend] API error:", response.status, errorText);
         throw new Error("API error: " + response.status);
       }
 
@@ -117,50 +119,36 @@ export default function ChatPage() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let fullContent = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (!value || value.length === 0) continue;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
+        // SSE events are delimited by double newlines
+        const events = buffer.split("\n\n");
+        // Keep the last (potentially incomplete) event in the buffer
+        buffer = events.pop() || "";
+        
+        for (const event of events) {
+          const line = event.trim();
+          if (!line || line === "data: [DONE]") continue;
+          if (!line.startsWith("data: ")) continue;
           try {
-            const parsed = JSON.parse(line);
+            const parsed = JSON.parse(line.slice(6));
             if (parsed.type === "token" && parsed.content) {
               fullContent += parsed.content;
               setStreamingContent(fullContent);
-              await new Promise(r => setTimeout(r, 20));
             } else if (parsed.type === "message" && parsed.content) {
               fullContent += parsed.content;
               setStreamingContent(fullContent);
-              await new Promise(r => setTimeout(r, 20));
             } else if (parsed.type === "error") {
               fullContent += `\n\nError: ${parsed.content}`;
               setStreamingContent(fullContent);
             }
           } catch { }
         }
-      }
-
-      if (buffer.trim()) {
-        try {
-          const parsed = JSON.parse(buffer);
-          if (parsed.type === "token" && parsed.content) {
-            fullContent += parsed.content;
-            setStreamingContent(fullContent);
-          } else if (parsed.type === "message" && parsed.content) {
-            fullContent += parsed.content;
-            setStreamingContent(fullContent);
-          } else if (parsed.type === "error") {
-            fullContent += `\n\nError: ${parsed.content}`;
-            setStreamingContent(fullContent);
-          }
-        } catch { }
       }
 
       await convex.mutation(api.chats.addMessage, {

@@ -41,7 +41,4 @@ yarn-error.log*
 next-env.d.ts
 
 #opencode
-rules.md 
-plan.md
-BuildingProcess.md
-UI.md
+AGENTS.md
