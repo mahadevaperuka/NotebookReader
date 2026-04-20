@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api";
-import { extractTextFromPDF, chunkText } from "../../../lib/pdf";
+import { chunkText } from "../../../lib/pdf";
 import { generateBatchEmbeddings } from "../../../lib/ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
@@ -14,16 +14,13 @@ interface Chunk {
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const file = formData.get("file") as File;
+    const text = formData.get("text") as string;
+    const filename = formData.get("filename") as string;
     const chatId = formData.get("chatId") as string;
 
-    if (!file || !file.name.endsWith(".pdf")) {
-      return NextResponse.json({ error: "PDF file required" }, { status: 400 });
+    if (!text || !filename) {
+      return NextResponse.json({ error: "Text and filename required" }, { status: 400 });
     }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const text = await extractTextFromPDF(uint8Array.buffer);
 
     const chunks = chunkText(text) as Chunk[];
 
@@ -31,7 +28,7 @@ export async function POST(req: NextRequest) {
     const embeddings = await generateBatchEmbeddings(chunkTexts);
 
     const documentId = await convex.mutation(api.documents.create, {
-      filename: file.name,
+      filename: filename,
       content: text,
     });
 
@@ -67,7 +64,7 @@ ${text.substring(0, 2000)}`;
     });
 
     const keywordsData = await keywordsResponse.json();
-    const keywords = keywordsData.response?.trim() || file.name;
+    const keywords = keywordsData.response?.trim() || filename;
 
     const summaryPrompt = `Create a brief 1-2 sentence summary of what this document is about.
 
@@ -85,12 +82,12 @@ ${text.substring(0, 2000)}`;
     });
 
     const summaryData = await summaryResponse.json();
-    const summary = summaryData.response?.trim() || file.name;
+    const summary = summaryData.response?.trim() || filename;
 
     const summaryForEmbedding = `Chat about: ${keywords}. Summary: ${summary}`;
     const summaryEmbedding = await generateBatchEmbeddings([summaryForEmbedding]);
 
-    let chatTitle = file.name.replace(".pdf", "");
+    let chatTitle = filename.replace(".pdf", "");
     chatTitle = chatTitle
       .replace(/[-_]/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase());

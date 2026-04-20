@@ -38,7 +38,6 @@ export async function* streamChat(messages: ChatMessage[], context: ChatContext)
   }
 
   const intent = detectIntent(userMessage);
-
   if (intent.type === "list_documents") {
     yield* handleListDocuments(context.documentIds);
     return;
@@ -81,7 +80,7 @@ function detectIntent(message: string): { type: string; query?: string } {
     return { type: "search", query: query || message };
   }
 
-  return { type: "rag" };
+  return { type: "general" };
 }
 
 async function* handleListDocuments(documentIds: string[]) {
@@ -259,12 +258,18 @@ ${contextHistory ? `Recent conversation:\n${contextHistory}\n` : ""}User: ${mess
 Respond helpfully. If they want to ask questions about documents, encourage them to create a chat and add documents to it.`;
 
   try {
+    const fullPrompt = `You are a helpful assistant for a document question-answering system.
+
+${contextHistory ? `Recent conversation:\n${contextHistory}\n` : ""}User: ${message}
+
+Respond helpfully. If they want to ask questions about documents, encourage them to create a chat and add documents to it.`;
+
     const response = await fetch("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "llama3.2",
-        prompt,
+        prompt: fullPrompt,
         stream: true,
       }),
     });
@@ -283,20 +288,18 @@ Respond helpfully. If they want to ask questions about documents, encourage them
       const text = decoder.decode(value, { stream: true });
       const lines = text.split("\n");
       for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6);
-          if (data === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.response) {
-              yield { type: "token", content: parsed.response };
-            }
-          } catch {}
-        }
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.response) {
+            yield { type: "token", content: parsed.response };
+          }
+        } catch {}
       }
     }
   } catch (error) {
-    yield { type: "error", content: "Sorry, I couldn't process that request." };
+    console.error("[agent] Error in handleGeneralChat:", error);
+    yield { type: "error", content: "Sorry, I couldn't process that request. Error: " + String(error) };
   }
 }
 

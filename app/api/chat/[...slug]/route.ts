@@ -57,9 +57,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
           }
           controller.close();
         } catch (error) {
-          console.error("Stream error:", error);
           controller.enqueue(
-            encoder.encode(JSON.stringify({ type: "error", content: "Stream failed" }) + "\n")
+            encoder.encode(JSON.stringify({ type: "error", content: "Stream failed: " + String(error) }) + "\n")
           );
           controller.close();
         }
@@ -74,7 +73,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     });
   } catch (error) {
     console.error("Chat error:", error);
-    return new Response(JSON.stringify({ error: "Chat failed" }), {
+    return new Response(JSON.stringify({ error: "Chat failed", details: String(error) }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });

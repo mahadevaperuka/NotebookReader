@@ -3,15 +3,6 @@ export interface Chunk {
   chunkIndex: number;
 }
 
-export async function extractTextFromPDF(
-  buffer: ArrayBuffer
-): Promise<string> {
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: Buffer.from(buffer) });
-  const result = await parser.getText();
-  return result.text;
-}
-
 export function chunkText(
   text: string,
   chunkSize: number = 500,
@@ -33,9 +24,9 @@ export function chunkText(
       }
     }
 
-    const chunkText = text.slice(start, end).trim();
-    if (chunkText) {
-      chunks.push({ chunkText, chunkIndex: index });
+    const chunkTextValue = text.slice(start, end).trim();
+    if (chunkTextValue) {
+      chunks.push({ chunkText: chunkTextValue, chunkIndex: index });
       index++;
     }
 

@@ -12,7 +12,6 @@ import type * as chatIndex from "../chatIndex.js";
 import type * as chats from "../chats.js";
 import type * as chunks from "../chunks.js";
 import type * as documents from "../documents.js";
-import type * as upload from "../upload.js";
 
 import type {
   ApiFromModules,
@@ -25,7 +24,6 @@ declare const fullApi: ApiFromModules<{
   chats: typeof chats;
   chunks: typeof chunks;
   documents: typeof documents;
-  upload: typeof upload;
 }>;
 
 /**
