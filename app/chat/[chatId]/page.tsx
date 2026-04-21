@@ -6,6 +6,8 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { extractTextFromPDF } from "../../../lib/pdf-client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import SendHorizontalIcon from "../../../components/icons/send-horizontal-icon";
 import UploadIcon from "../../../components/icons/upload-icon";
 import MoonIcon from "../../../components/icons/moon-icon";
@@ -19,6 +21,7 @@ export default function ChatPage() {
   const chatId = params?.chatId as string;
 
   // Convex hooks for real-time data
+  const chats = useQuery(api.chats.list);
   const chat = useQuery(
     api.chats.getById,
     chatId ? { id: chatId as Id<"chats"> } : "skip"
@@ -26,6 +29,8 @@ export default function ChatPage() {
 
   const addMessage = useMutation(api.chats.addMessage);
   const deleteChatMutation = useMutation(api.chats.deleteChat);
+  const createChatMutation = useMutation(api.chats.create);
+  const clearMessages = useMutation(api.chats.clearMessages);
 
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -33,6 +38,7 @@ export default function ChatPage() {
   const [darkMode, setDarkMode] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,6 +55,14 @@ export default function ChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat?.messages, streamingContent]);
+
+  useEffect(() => {
+    // Clear the main chat history entirely whenever you navigate to it
+    // making it a truly transient search bar
+    if (chat?.isMain && chatId) {
+      clearMessages({ chatId: chatId as Id<"chats"> }).catch(console.error);
+    }
+  }, [chat?.isMain, chatId, clearMessages]);
 
   const toggleTheme = () => {
     const newMode = !darkMode;
@@ -78,6 +92,11 @@ export default function ChatPage() {
     setStreamingContent("");
 
     try {
+      // For the transient main chat, clear previous query/answer before taking the new one
+      if (chat?.isMain) {
+        await clearMessages({ chatId: chatId as Id<"chats"> });
+      }
+
       // Save user message immediately (before streaming) so it's not lost
       await addMessage({
         chatId: chatId as Id<"chats">,
@@ -146,6 +165,16 @@ export default function ChatPage() {
         content: fullContent,
       });
 
+      // Update dynamic memory index in the background (fire and forget)
+      if (!chat?.isMain) {
+        fetch("/api/index-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId }),
+          keepalive: true,
+        }).catch((err) => console.error("Failed to index chat:", err));
+      }
+
     } catch (error) {
       console.error("Chat error:", error);
       setStreamingContent("Sorry, I encountered an error. Please try again.");
@@ -194,6 +223,27 @@ export default function ChatPage() {
 
   const goHome = () => router.push("/");
 
+  const createNewChat = async () => {
+    try {
+      const newChatId = await createChatMutation({ title: "New Document Chat" });
+      router.push(`/chat/${newChatId}`);
+    } catch (error) {
+      console.error("Failed to create chat:", error);
+    }
+  };
+
+  const formatDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    
+    if (days === 0) return "Today";
+    if (days === 1) return "Yesterday";
+    if (days < 7) return `${days} d`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
   if (!mounted) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
@@ -218,141 +268,235 @@ export default function ChatPage() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <header className="border-b border-border px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={goHome}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors rounded-lg group"
-            title="Go back"
-          >
-            <ArrowBackIcon size={20} className="group-hover:-translate-x-0.5 transition-transform" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${chat.isMain ? "bg-primary" : "bg-muted-foreground/40"}`} />
-            <h1 className="text-lg font-semibold">
-              {chat.isMain ? "Main Chat" : chat.title || "Chat"}
-            </h1>
-            {chat.isMain && (
-              <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full font-medium">
-                Main
-              </span>
-            )}
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {!chat.isMain && (
-            <button
-              onClick={handleDelete}
-              className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors rounded-lg group text-sm font-medium flex items-center gap-2"
-              title="Delete chat"
-            >
-              <TrashIcon size={18} className="group-hover:text-destructive" />
-              <span className="hidden sm:inline">Delete</span>
-            </button>
-          )}
-          <button
-            onClick={toggleTheme}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors rounded-lg group"
-            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            {darkMode ? (
-              <BulbSvg size={20} className="text-amber-400 group-hover:text-amber-300" />
-            ) : (
-              <MoonIcon size={20} className="text-slate-600 group-hover:text-slate-800" />
-            )}
-          </button>
-        </div>
-      </header>
+  // Sort chats for sidebar
+  const standardChats = chats
+    ? chats.filter((c) => !c.isMain).sort((a, b) => b.updatedAt - a.updatedAt)
+    : [];
+  const mainChat = chats ? chats.find((c) => c.isMain) : null;
 
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        {chat.documents && chat.documents.length > 0 && (
-          <div className="mb-4 p-3 bg-card border border-border rounded-lg">
-            <div className="text-sm font-medium mb-2 text-muted-foreground">Documents</div>
-            <div className="flex flex-wrap gap-2">
-              {chat.documents.map((doc: any, i: number) => (
-                <span key={i} className="px-3 py-1 bg-primary/10 text-primary text-sm rounded-full font-medium">
-                  {doc.filename}
-                </span>
+  return (
+    <div className="h-screen overflow-hidden bg-background text-foreground flex relative">
+      {/* SIDEBAR (Desktop) */}
+      <aside className={`w-[260px] border-r border-border bg-secondary/20 flex-col shrink-0 ${sidebarOpen ? "hidden md:flex" : "hidden"}`}>
+        <div className="p-4 border-b border-border">
+          <button
+            onClick={createNewChat}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] font-medium active:scale-[0.98] shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all"
+          >
+            <span className="text-xl leading-none font-medium">+</span> New Chat
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+          {mainChat && (
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2">Navigation</div>
+              <button
+                onClick={() => router.push(`/chat/${mainChat._id}`)}
+                className={`w-full text-left px-3 py-2 transition-colors flex items-center gap-2 ${
+                  chatId === mainChat._id 
+                    ? "bg-primary/10 text-primary font-medium" 
+                    : "hover:bg-secondary/50 text-foreground"
+                }`}
+              >
+                <div className={`w-2 h-2 rounded-full ${chatId === mainChat._id ? "bg-primary" : "bg-primary/40"}`} />
+                <span className="truncate">Search Assistant</span>
+              </button>
+            </div>
+          )}
+
+          <div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2">Recent Docs</div>
+            <div className="space-y-0.5">
+              {standardChats.map((c) => (
+                <button
+                  key={c._id}
+                  onClick={() => router.push(`/chat/${c._id}`)}
+                  className={`w-full text-left px-3 py-2 transition-colors flex justify-between items-center group ${
+                    chatId === c._id 
+                      ? "bg-secondary text-foreground font-medium" 
+                      : "hover:bg-secondary/50 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span className="truncate flex-1">{c.title || "Untitled Chat"}</span>
+                  <span className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pl-2">
+                    {formatDate(c.updatedAt)}
+                  </span>
+                </button>
               ))}
             </div>
           </div>
-        )}
-
-        {chat.messages?.length === 0 && !streaming && (
-          <div className="text-center py-12 text-muted-foreground">
-            {chat.isMain
-              ? "Ask me about your past conversations. Try: \"Did we talk about X?\""
-              : "Start a conversation or upload a document to begin."
-            }
-          </div>
-        )}
-
-        {chat.messages?.map((msg: any, i: number) => (
-          <div key={i} className="mb-4">
-            <div className={`font-medium text-xs mb-1.5 uppercase tracking-wide ${msg.role === "user" ? "text-primary" : "text-muted-foreground"}`}>
-              {msg.role === "user" ? "You" : "Assistant"}
-            </div>
-            <div className={`px-4 py-3 rounded-lg ${msg.role === "user" ? "bg-card border border-border" : "bg-secondary text-secondary-foreground"}`}>
-              {msg.content}
-            </div>
-          </div>
-        ))}
-
-        {streaming && (
-          <div className="mb-4">
-            <div className="font-medium text-xs text-muted-foreground mb-1.5 uppercase tracking-wide">Assistant</div>
-            <div className="px-4 py-3 bg-secondary text-secondary-foreground rounded-lg">
-              {streamingContent}
-              <span className="inline-block w-2 h-4 bg-primary ml-0.5 animate-pulse" />
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div className="border-t border-border px-6 py-4">
-        <div className="flex gap-2 max-w-3xl mx-auto">
-          <label className="flex items-center justify-center w-12 h-12 shrink-0 bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer rounded-full border border-border group" title="Upload Document">
-            {uploading ? (
-              <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-            ) : (
-              <UploadIcon size={20} className="group-hover:text-amber-500" />
-            )}
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={handleFileUpload}
-              className="hidden"
-              disabled={uploading}
-            />
-          </label>
-          <input
-            type="text"
-            placeholder={chat.isMain ? "Ask about past conversations..." : "Ask about your documents..."}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-            disabled={streaming}
-            className="flex-1 px-5 py-3 bg-card border border-border text-card-foreground placeholder:text-muted-foreground disabled:opacity-50 rounded-full focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm"
-          />
-          <button
-            onClick={sendMessage}
-            disabled={streaming || !input.trim()}
-            className="flex items-center justify-center w-12 h-12 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed rounded-full shadow-md hover:shadow-lg group"
-            title="Send Message"
-          >
-            {streaming ? (
-              <span className="w-2 h-2 bg-current rounded-full animate-bounce"></span>
-            ) : (
-              <SendHorizontalIcon size={20} className="ml-1" />
-            )}
-          </button>
         </div>
-      </div>
+      </aside>
+
+      {/* MAIN CHAT */}
+      <main className="flex-1 flex flex-col min-w-0">
+        <header className="border-b border-border px-6 py-3 flex items-center justify-between shrink-0 bg-background/80 backdrop-blur-md z-10">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 text-muted-foreground hover:text-foreground transition-colors group hidden md:flex border border-transparent hover:border-border hover:bg-secondary"
+              title="Toggle Sidebar"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter"><rect x="3" y="3" width="18" height="18"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            </button>
+            <button
+              onClick={goHome}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors group border border-transparent hover:border-border md:hidden"
+              title="Go back"
+            >
+              <ArrowBackIcon size={20} className="group-hover:-translate-x-0.5 transition-transform" />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${chat.isMain ? "bg-primary" : "bg-muted-foreground/40"}`} />
+              <h1 className="text-lg font-semibold truncate max-w-[200px] sm:max-w-md">
+                {chat.isMain ? "Global Search Assistant" : chat.title || "Chat"}
+              </h1>
+              {chat.isMain && (
+                <span className="hidden sm:inline-block text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full font-medium">
+                  Main
+                </span>
+              )}
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {!chat.isMain && (
+              <button
+                onClick={handleDelete}
+                className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors group text-sm font-medium flex items-center gap-2"
+                title="Delete chat"
+              >
+                <TrashIcon size={18} className="group-hover:text-destructive" />
+                <span className="hidden sm:inline">Delete</span>
+              </button>
+            )}
+            <button
+              onClick={toggleTheme}
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors group"
+              title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {darkMode ? (
+                <BulbSvg size={20} className="text-muted-foreground group-hover:text-foreground" />
+              ) : (
+                <MoonIcon size={20} className="text-muted-foreground group-hover:text-foreground" />
+              )}
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-6 py-6 pb-8">
+          <div className="max-w-3xl mx-auto w-full">
+            {chat.documents && chat.documents.length > 0 && (
+              <div className="mb-6 p-3 bg-card border border-border shadow-sm">
+                <div className="text-sm font-medium mb-2 text-muted-foreground">Documents referenced</div>
+                <div className="flex flex-wrap gap-2">
+                  {chat.documents.map((doc: any, i: number) => (
+                    <span key={i} className="px-3 py-1 bg-primary/10 text-primary text-sm font-medium border border-primary/20">
+                      {doc.filename}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {chat.messages?.length === 0 && !streaming && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 bg-secondary flex items-center justify-center mb-4">
+                  <span className="text-2xl">👋</span>
+                </div>
+                <h3 className="text-xl font-medium mb-2">{chat.isMain ? "Search Assistant" : "New Document Chat"}</h3>
+                <p className="text-muted-foreground max-w-md">
+                  {chat.isMain
+                    ? "Ask me to find specific topics or files across all your past conversations."
+                    : "Upload a PDF document to begin chatting with it."
+                  }
+                </p>
+              </div>
+            )}
+
+            {chat.messages?.map((msg: any, i: number) => (
+              <div key={i} className={`mb-6 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[85%] px-5 py-4 ${
+                  msg.role === "user" 
+                    ? "bg-primary text-primary-foreground" 
+                    : "bg-secondary text-secondary-foreground border border-border shadow-sm"
+                }`}>
+                  {msg.role === "assistant" ? (
+                    <div className="prose prose-sm md:prose-base max-w-none prose-p:leading-relaxed prose-pre:bg-black/10 dark:prose-pre:bg-black/40 prose-pre:backdrop-blur-sm prose-a:text-primary dark:prose-a:text-indigo-400 prose-p:text-current prose-headings:text-current prose-strong:text-current prose-li:text-current text-current">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {streaming && (
+              <div className="mb-6 flex justify-start">
+                <div className="max-w-[85%] px-5 py-4 bg-secondary text-secondary-foreground border border-border shadow-sm">
+                  {streamingContent ? (
+                    <div className="prose prose-sm md:prose-base max-w-none prose-p:leading-relaxed prose-p:text-current prose-headings:text-current prose-strong:text-current prose-li:text-current text-current">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {streamingContent + " █"}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 h-6">
+                      <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* INPUT AREA */}
+        <div className="border-t border-border px-6 py-4 shrink-0 bg-background/80 backdrop-blur-md">
+          <div className="flex gap-3 max-w-3xl mx-auto w-full">
+            <label className="flex items-center justify-center w-12 h-12 shrink-0 bg-card text-foreground cursor-pointer border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all group" title="Upload Document">
+              {uploading ? (
+                <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              ) : (
+                <UploadIcon size={20} className="group-hover:scale-110 transition-transform" />
+              )}
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={handleFileUpload}
+                className="hidden"
+                disabled={uploading}
+              />
+            </label>
+            <div className="flex-1 relative flex items-center">
+              <input
+                type="text"
+                placeholder={chat.isMain ? "Ask about past conversations..." : "Ask a question about your documents..."}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                disabled={streaming}
+                className="w-full pl-5 pr-14 py-3.5 bg-card border border-border text-card-foreground placeholder:text-muted-foreground disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm transition-all"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={streaming || !input.trim()}
+                className="absolute right-1.5 z-10 flex items-center justify-center w-9 h-9 shrink-0 bg-card text-foreground font-medium disabled:opacity-50 disabled:cursor-not-allowed border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[2px_2px_0px_0px_#3674B5] dark:shadow-[2px_2px_0px_0px_#578FCA] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
+                title="Send Message"
+              >
+                <SendHorizontalIcon size={18} className="translate-x-0.5 group-hover:translate-x-1 transition-transform" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
+import { Id } from "../convex/_generated/dataModel";
 import { generateEmbedding } from "./ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
@@ -19,7 +20,7 @@ export interface ChatMessage {
 
 export interface ChatContext {
   chatId: string;
-  documentIds: string[];
+  documentIds: Id<"documents">[];
   conversationHistory: ChatMessage[];
   isMain: boolean;
 }
@@ -84,7 +85,7 @@ function detectIntent(message: string): { type: string; query?: string } {
   return { type: "general" };
 }
 
-async function* handleListDocuments(documentIds: string[]) {
+async function* handleListDocuments(documentIds: Id<"documents">[]) {
   try {
     let documents;
     if (documentIds.length > 0) {
@@ -103,11 +104,11 @@ async function* handleListDocuments(documentIds: string[]) {
     }
 
     const docList = docs
-      .map((doc, i) => `${i + 1}. **${doc.filename}** (${formatDate(doc.uploadedAt)})`)
+      .map((doc, i) => `${i + 1}. **${doc?.filename || 'Unknown'}** (${formatDate(doc?.uploadedAt || Date.now())})`)
       .join("\n");
 
     yield { type: "message", content: "Documents in this conversation:\n\n" + docList };
-  } catch (error) {
+  } catch {
     yield { type: "error", content: "Failed to fetch documents" };
   }
 }
@@ -128,9 +129,9 @@ async function* handleDocumentSearch(
     const queryEmbedding = await generateEmbedding(query);
 
     // Use Convex native vector search instead of loading all chunks into memory
-    const results: any[] = await convex.action(api.chunks.searchSimilar, {
+    const results: Array<{ chunkText: string }> = await convex.action(api.chunks.searchSimilar, {
       embedding: queryEmbedding,
-      ...(documentIds.length > 0 ? { documentIds: documentIds as any } : {}),
+      ...(documentIds.length > 0 ? { documentIds: documentIds as Id<"documents">[] } : {}),
       limit: 5,
     });
 
@@ -293,7 +294,7 @@ function formatDate(timestamp: number): string {
   });
 }
 
-async function* handleMainChat(message: string, conversationHistory: ChatMessage[]) {
+async function* handleMainChat(message: string, _conversationHistory: ChatMessage[]) {
   yield { type: "searching", content: "Searching your chat history..." };
 
   try {
@@ -313,14 +314,14 @@ async function* handleMainChat(message: string, conversationHistory: ChatMessage
     const queryEmbedding = await generateEmbedding(message);
 
     const scoredChats = allIndexes
-      .map((idx: any) => ({
+      .map((idx: { chatId: string; keywords: string; summary: string; summaryEmbedding: number[] }) => ({
         ...idx,
         score: idx.summaryEmbedding?.length > 0
           ? cosineSimilarity(queryEmbedding, idx.summaryEmbedding)
           : 0,
       }))
-      .filter((c: any) => c.score > 0.05)
-      .sort((a: any, b: any) => b.score - a.score)
+      .filter((c: { score: number }) => c.score > 0.50)
+      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
       .slice(0, 3);
 
     if (scoredChats.length === 0) {
@@ -333,18 +334,21 @@ async function* handleMainChat(message: string, conversationHistory: ChatMessage
     }
 
     const chatList = scoredChats
-      .map((c: any, i: number) => `${i + 1}. ${c.summary}\n   Keywords: ${c.keywords}\n   ID: ${c.chatId}`)
+      .map((c: { summary: string; keywords: string; chatId: string; score: number }, i: number) => {
+        const scorePercent = Math.round(c.score * 100);
+        return `Option ${i + 1}:\n   Summary: ${c.summary}\n   Keywords: ${c.keywords}\n   ID: ${c.chatId}\n   Relevance Score: ${scorePercent}%`;
+      })
       .join("\n\n");
 
     const redirectPrompt = `Given the user's question: "${message}"
 
-And these relevant chats found:
+And these potentially relevant chats found from the database:
 ${chatList}
 
 Create a helpful response that:
-1. Shows the top most relevant chats with their relevance score
-2. Explains briefly why each is relevant
-3. Offers a clickable URL to switch to them (e.g. [Chat Title](/chat/ID))
+1. Shows only the chats that are ACTUALLY relevant to the user's question. 
+2. If a chat is completely unrelated, DO NOT output it at all.
+3. For the relevant ones, explain briefly why they are relevant and offer a clickable URL to switch to them.
 
 Format your response exactly as normal markdown text.
 Do NOT use ANY system tags like FOUND_CHATS: or START_NEW:. Write naturally in markdown.

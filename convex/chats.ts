@@ -111,6 +111,20 @@ export const addMessage = mutation({
   },
 });
 
+export const clearMessages = mutation({
+  args: { chatId: v.id("chats") },
+  handler: async (ctx, args) => {
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("chatId", (q) => q.eq("chatId", args.chatId))
+      .collect();
+
+    for (const msg of messages) {
+      await ctx.db.delete(msg._id);
+    }
+  },
+});
+
 export const addDocument = mutation({
   args: {
     chatId: v.id("chats"),

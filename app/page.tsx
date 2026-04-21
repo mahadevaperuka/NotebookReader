@@ -100,9 +100,9 @@ export default function Home() {
           title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
         >
           {darkMode ? (
-            <BulbSvg size={20} className="text-amber-400 group-hover:text-amber-300" />
+            <BulbSvg size={20} className="text-muted-foreground group-hover:text-foreground" />
           ) : (
-            <MoonIcon size={20} className="text-slate-600 group-hover:text-slate-800" />
+            <MoonIcon size={20} className="text-muted-foreground group-hover:text-foreground" />
           )}
         </button>
       </header>
