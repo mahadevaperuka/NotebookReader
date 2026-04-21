@@ -14,7 +14,12 @@ export default defineSchema({
     chunkIndex: v.number(),
     embedding: v.array(v.float64()),
   })
-    .index("documentId", ["documentId"]),
+    .index("documentId", ["documentId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 768,
+      filterFields: ["documentId"],
+    }),
 
   chats: defineTable({
     title: v.string(),

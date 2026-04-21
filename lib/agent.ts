@@ -4,6 +4,7 @@ import { generateEmbedding } from "./ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
+// Keep cosineSimilarity for chatIndex search (no vector index on that table yet)
 function cosineSimilarity(a: number[], b: number[]): number {
   const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
   const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
@@ -121,45 +122,29 @@ async function* handleDocumentSearch(
   try {
     yield { type: "searching", content: "Searching documents..." };
 
-    let documentIds = context.documentIds;
-    
-     if (documentIds.length === 0) {
-       const allDocs = await convex.query(api.documents.list, {});
-       documentIds = allDocs.map((d) => d._id);
-     }
+    const documentIds = context.documentIds;
 
-    if (documentIds.length === 0) {
-      yield {
-        type: "message",
-        content: "No documents available. Please upload a PDF first.",
-      };
-      return;
-    }
-
-     let chunks: Array<{
-       _id: string;
-       documentId: string;
-       chunkText: string;
-       chunkIndex: number;
-       embedding: number[];
-     }> = [];
-    for (const docId of documentIds) {
-      const docChunks = await convex.query(api.chunks.listByDocument, { documentId: docId });
-      chunks = [...chunks, ...docChunks];
-    }
-
+    // Generate embedding for the search query
     const queryEmbedding = await generateEmbedding(query);
 
-     const results = chunks
-       .map((chunk) => {
-         const similarity = chunk.embedding && chunk.embedding.length > 0
-           ? cosineSimilarity(queryEmbedding, chunk.embedding)
-           : 0;
-         return { ...chunk, similarity };
-       })
-       .filter((chunk) => chunk.similarity > 0.1)
-       .sort((a, b) => b.similarity - a.similarity)
-       .slice(0, 5);
+    // Use Convex native vector search instead of loading all chunks into memory
+    const results: any[] = await convex.action(api.chunks.searchSimilar, {
+      embedding: queryEmbedding,
+      ...(documentIds.length > 0 ? { documentIds: documentIds as any } : {}),
+      limit: 5,
+    });
+
+    if (!results || results.length === 0) {
+      // Fallback: check if there are any documents at all
+      const allDocs = await convex.query(api.documents.list, {});
+      if (allDocs.length === 0) {
+        yield {
+          type: "message",
+          content: "No documents available. Please upload a PDF first.",
+        };
+        return;
+      }
+    }
 
     if (results.length === 0) {
       yield {
@@ -309,147 +294,105 @@ function formatDate(timestamp: number): string {
 }
 
 async function* handleMainChat(message: string, conversationHistory: ChatMessage[]) {
-  const lowerMessage = message.toLowerCase();
+  yield { type: "searching", content: "Searching your chat history..." };
 
-  const routingKeywords = [
-    "did i talk about",
-    "did we discuss",
-    "did we talk about",
-    "earlier",
-    "before",
-    "previous",
-    "earlier chat",
-    "other chat",
-    "that conversation",
-    "what did i ask",
-    "what did we discuss",
-    "search my chats",
-    "find my chat",
-    "show me chats",
-    "which chats",
-    "what chats",
-  ];
+  try {
+    const allIndexes = await convex.query(api.chatIndex.searchIndex, {
+      query: message,
+    });
 
-  const isRoutingQuery = routingKeywords.some((kw) =>
-    lowerMessage.includes(kw)
-  );
+    if (!allIndexes || allIndexes.length === 0) {
+      yield {
+        type: "message",
+        content:
+          "I don't have any indexed chats yet. Upload some documents to a new chat and I'll remember the topics!",
+      };
+      return;
+    }
 
-  if (isRoutingQuery) {
-    yield { type: "searching", content: "Searching your chat history..." };
+    const queryEmbedding = await generateEmbedding(message);
 
-    try {
-      const allIndexes = await convex.query(api.chatIndex.searchIndex, {
-        query: message,
-      });
+    const scoredChats = allIndexes
+      .map((idx: any) => ({
+        ...idx,
+        score: idx.summaryEmbedding?.length > 0
+          ? cosineSimilarity(queryEmbedding, idx.summaryEmbedding)
+          : 0,
+      }))
+      .filter((c: any) => c.score > 0.05)
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 3);
 
-      if (!allIndexes || allIndexes.length === 0) {
-        yield {
-          type: "message",
-          content:
-            "I don't have any indexed chats yet. Start a new chat with some documents and I'll remember the topics!",
-        };
-        return;
-      }
+    if (scoredChats.length === 0) {
+      yield {
+        type: "message",
+        content:
+          "I couldn't find any chats that match that topic. Would you like to start a new chat about this?",
+      };
+      return;
+    }
 
-      const queryEmbedding = await generateEmbedding(message);
+    const chatList = scoredChats
+      .map((c: any, i: number) => `${i + 1}. ${c.summary}\n   Keywords: ${c.keywords}\n   ID: ${c.chatId}`)
+      .join("\n\n");
 
-      const scoredChats = allIndexes
-        .map((idx: any) => ({
-          ...idx,
-          score: idx.summaryEmbedding?.length > 0
-            ? cosineSimilarity(queryEmbedding, idx.summaryEmbedding)
-            : 0,
-        }))
-        .filter((c: any) => c.score > 0.05)
-        .sort((a: any, b: any) => b.score - a.score)
-        .slice(0, 3);
-
-      if (scoredChats.length === 0) {
-        yield {
-          type: "message",
-          content:
-            "I couldn't find any chats that match that topic. Would you like to start a new chat about this?",
-        };
-        return;
-      }
-
-      const chatList = scoredChats
-        .map((c: any, i: number) => `${i + 1}. ${c.summary}\n   Keywords: ${c.keywords}`)
-        .join("\n\n");
-
-      const redirectPrompt = `Given the user's question: "${message}"
+    const redirectPrompt = `Given the user's question: "${message}"
 
 And these relevant chats found:
 ${chatList}
 
 Create a helpful response that:
-1. Shows the top 3 most relevant chats with their relevance score
+1. Shows the top most relevant chats with their relevance score
 2. Explains briefly why each is relevant
-3. Offers to switch to any of them
+3. Offers a clickable URL to switch to them (e.g. [Chat Title](/chat/ID))
 
-Format your response as:
+Format your response exactly as normal markdown text.
+Do NOT use ANY system tags like FOUND_CHATS: or START_NEW:. Write naturally in markdown.
+Make sure the links use the exact ID format: [Chat Title](/chat/the_chat_id).
+`;
 
-FOUND_CHATS:
-[For each relevant chat, format as:]
-- Chat [n] (score: X%): [chat summary]
-  Keywords: [keywords]
-  To switch, say "go to [chat_id]"
+    const response = await fetch("http://localhost:11434/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "llama3.2",
+        prompt: redirectPrompt,
+        stream: true,
+      }),
+    });
 
-If the user should start a new chat, add:
-START_NEW: [brief suggestion]
-
-Otherwise, end with a helpful prompt like "Which chat would you like to switch to?"`;
-
-      const response = await fetch("http://localhost:11434/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "llama3.2",
-          prompt: redirectPrompt,
-          stream: true,
-        }),
-      });
-
-      if (!response.body) {
-        throw new Error("No response body");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-       for (const line of lines) {
-         if (line.trim()) {
-           try {
-             const parsed = JSON.parse(line);
-             if (parsed.response) {
-               yield { type: "token", content: parsed.response };
-             }
-           } catch {}
-         }
-       }
-      }
-    } catch (error) {
-      console.error("Main chat search error:", error);
-      yield {
-        type: "message",
-        content: "I had trouble searching your chat history. Try asking about a specific topic.",
-      };
+    if (!response.body) {
+      throw new Error("No response body");
     }
-    return;
-  }
 
-  yield {
-    type: "message",
-    content:
-      "I'm your main chat assistant. I can help you find past conversations or route you to the right chat. Try asking things like:\n\n- \"Did we talk about X?\"\n- \"Show me chats about Y\"\n- \"Which chats do we have?\"\n\nOr create a new chat to start a fresh conversation with documents.",
-  };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.response) {
+              yield { type: "token", content: parsed.response };
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Main chat search error:", error);
+    yield {
+      type: "message",
+      content: "I had trouble searching your chat history. Make sure Ollama is running.",
+    };
+  }
 }

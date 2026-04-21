@@ -2,34 +2,31 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ConvexHttpClient } from "convex/browser";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { Id } from "../../../convex/_generated/dataModel";
 import { extractTextFromPDF } from "../../../lib/pdf-client";
-
-const convex = new ConvexHttpClient(
-  process.env.NEXT_PUBLIC_CONVEX_URL || "https://superb-bison-966.convex.cloud"
-);
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
-
-interface Chat {
-  _id: string;
-  title: string;
-  isMain: boolean;
-  messages: Array<{ role: string; content: string; timestamp: number }>;
-  documents: Array<{ _id: string; filename: string }> | null;
-}
+import SendHorizontalIcon from "../../../components/icons/send-horizontal-icon";
+import UploadIcon from "../../../components/icons/upload-icon";
+import MoonIcon from "../../../components/icons/moon-icon";
+import BulbSvg from "../../../components/icons/bulb-svg";
+import ArrowBackIcon from "../../../components/icons/arrow-back-icon";
+import TrashIcon from "../../../components/icons/trash-icon";
 
 export default function ChatPage() {
   const router = useRouter();
   const params = useParams();
   const chatId = params?.chatId as string;
 
-  const [chat, setChat] = useState<Chat | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Convex hooks for real-time data
+  const chat = useQuery(
+    api.chats.getById,
+    chatId ? { id: chatId as Id<"chats"> } : "skip"
+  );
+
+  const addMessage = useMutation(api.chats.addMessage);
+  const deleteChatMutation = useMutation(api.chats.deleteChat);
+
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
@@ -50,25 +47,8 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    if (chatId) {
-      loadChat();
-    }
-  }, [chatId]);
-
-  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat?.messages, streamingContent]);
-
-  const loadChat = async () => {
-    try {
-      const chatData: any = await convex.query(api.chats.getById, { id: chatId as any });
-      setChat(chatData);
-    } catch (error) {
-      console.error("Failed to load chat:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const toggleTheme = () => {
     const newMode = !darkMode;
@@ -82,6 +62,13 @@ export default function ChatPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (confirm("Are you sure you want to delete this chat?")) {
+      await deleteChatMutation({ id: chatId as Id<"chats"> });
+      router.push("/");
+    }
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || streaming) return;
 
@@ -90,13 +77,14 @@ export default function ChatPage() {
     setStreaming(true);
     setStreamingContent("");
 
-    const newMessages = [
-      ...(chat?.messages || []),
-      { role: "user", content: userMessage, timestamp: Date.now() },
-    ];
-    setChat({ ...chat!, messages: newMessages as any });
-
     try {
+      // Save user message immediately (before streaming) so it's not lost
+      await addMessage({
+        chatId: chatId as Id<"chats">,
+        role: "user",
+        content: userMessage,
+      });
+
       let fullContent = "";
       
       const response = await fetch(`/api/chat/${chatId}`, {
@@ -151,24 +139,19 @@ export default function ChatPage() {
         }
       }
 
-      await convex.mutation(api.chats.addMessage, {
-        chatId: chatId as any,
-        role: "user",
-        content: userMessage,
-      });
-
-      await convex.mutation(api.chats.addMessage, {
-        chatId: chatId as any,
+      // Save assistant message after streaming completes
+      await addMessage({
+        chatId: chatId as Id<"chats">,
         role: "assistant",
         content: fullContent,
       });
 
-      loadChat();
     } catch (error) {
       console.error("Chat error:", error);
       setStreamingContent("Sorry, I encountered an error. Please try again.");
     } finally {
       setStreaming(false);
+      setStreamingContent("");
     }
   };
 
@@ -200,7 +183,7 @@ export default function ChatPage() {
       const result = await response.json();
       console.log("Upload result:", result);
 
-      loadChat();
+      // No need for manual reload — Convex hooks auto-update
     } catch (error) {
       console.error("Upload error:", error);
       alert("Failed to upload file");
@@ -214,15 +197,23 @@ export default function ChatPage() {
   if (!mounted) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        Loading...
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
 
-  if (loading) {
+  if (chat === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        Loading...
+        <div className="text-muted-foreground">Loading chat...</div>
+      </div>
+    );
+  }
+
+  if (chat === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+        <div className="text-muted-foreground">Chat not found</div>
       </div>
     );
   }
@@ -233,51 +224,78 @@ export default function ChatPage() {
         <div className="flex items-center gap-4">
           <button
             onClick={goHome}
-            className="px-4 py-2 bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors rounded-lg group"
+            title="Go back"
           >
-            ← Home
+            <ArrowBackIcon size={20} className="group-hover:-translate-x-0.5 transition-transform" />
           </button>
-          <h1 className="text-lg font-semibold">
-            {chat?.isMain ? "🏠 Main Chat" : chat?.title || "Chat"}
-          </h1>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${chat.isMain ? "bg-primary" : "bg-muted-foreground/40"}`} />
+            <h1 className="text-lg font-semibold">
+              {chat.isMain ? "Main Chat" : chat.title || "Chat"}
+            </h1>
+            {chat.isMain && (
+              <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full font-medium">
+                Main
+              </span>
+            )}
+          </div>
         </div>
-        <button
-          onClick={toggleTheme}
-          className="w-10 h-10 flex items-center justify-center bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-        >
-          {darkMode ? "☀️" : "🌙"}
-        </button>
+        
+        <div className="flex items-center gap-2">
+          {!chat.isMain && (
+            <button
+              onClick={handleDelete}
+              className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors rounded-lg group text-sm font-medium flex items-center gap-2"
+              title="Delete chat"
+            >
+              <TrashIcon size={18} className="group-hover:text-destructive" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+          )}
+          <button
+            onClick={toggleTheme}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors rounded-lg group"
+            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {darkMode ? (
+              <BulbSvg size={20} className="text-amber-400 group-hover:text-amber-300" />
+            ) : (
+              <MoonIcon size={20} className="text-slate-600 group-hover:text-slate-800" />
+            )}
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {chat?.documents && chat.documents.length > 0 && (
-          <div className="mb-4 p-3 bg-card border border-border">
-            <div className="text-sm font-medium mb-2">Documents:</div>
+        {chat.documents && chat.documents.length > 0 && (
+          <div className="mb-4 p-3 bg-card border border-border rounded-lg">
+            <div className="text-sm font-medium mb-2 text-muted-foreground">Documents</div>
             <div className="flex flex-wrap gap-2">
               {chat.documents.map((doc: any, i: number) => (
-                <span key={i} className="px-2 py-1 bg-secondary text-secondary-foreground text-sm">
-                  📄 {doc.filename}
+                <span key={i} className="px-3 py-1 bg-primary/10 text-primary text-sm rounded-full font-medium">
+                  {doc.filename}
                 </span>
               ))}
             </div>
           </div>
         )}
 
-        {chat?.messages?.length === 0 && (
+        {chat.messages?.length === 0 && !streaming && (
           <div className="text-center py-12 text-muted-foreground">
             {chat.isMain
-              ? "Ask me about your past conversations! Try: 'Did we talk about X?'"
+              ? "Ask me about your past conversations. Try: \"Did we talk about X?\""
               : "Start a conversation or upload a document to begin."
             }
           </div>
         )}
 
-        {chat?.messages?.map((msg: any, i: number) => (
+        {chat.messages?.map((msg: any, i: number) => (
           <div key={i} className="mb-4">
-            <div className={`font-medium text-sm mb-1 ${msg.role === "user" ? "text-primary" : "text-muted-foreground"}`}>
+            <div className={`font-medium text-xs mb-1.5 uppercase tracking-wide ${msg.role === "user" ? "text-primary" : "text-muted-foreground"}`}>
               {msg.role === "user" ? "You" : "Assistant"}
             </div>
-            <div className={`px-4 py-3 ${msg.role === "user" ? "bg-card border border-border" : "bg-secondary text-secondary-foreground"}`}>
+            <div className={`px-4 py-3 rounded-lg ${msg.role === "user" ? "bg-card border border-border" : "bg-secondary text-secondary-foreground"}`}>
               {msg.content}
             </div>
           </div>
@@ -285,10 +303,10 @@ export default function ChatPage() {
 
         {streaming && (
           <div className="mb-4">
-            <div className="font-medium text-sm text-muted-foreground mb-1">Assistant</div>
-            <div className="px-4 py-3 bg-secondary text-secondary-foreground">
+            <div className="font-medium text-xs text-muted-foreground mb-1.5 uppercase tracking-wide">Assistant</div>
+            <div className="px-4 py-3 bg-secondary text-secondary-foreground rounded-lg">
               {streamingContent}
-              <span className="animate-pulse">▊</span>
+              <span className="inline-block w-2 h-4 bg-primary ml-0.5 animate-pulse" />
             </div>
           </div>
         )}
@@ -298,8 +316,12 @@ export default function ChatPage() {
 
       <div className="border-t border-border px-6 py-4">
         <div className="flex gap-2 max-w-3xl mx-auto">
-          <label className="px-4 py-3 bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer">
-            {uploading ? "Uploading..." : "📎"}
+          <label className="flex items-center justify-center w-12 h-12 shrink-0 bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer rounded-full border border-border group" title="Upload Document">
+            {uploading ? (
+              <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+            ) : (
+              <UploadIcon size={20} className="group-hover:text-amber-500" />
+            )}
             <input
               type="file"
               accept=".pdf"
@@ -310,19 +332,24 @@ export default function ChatPage() {
           </label>
           <input
             type="text"
-            placeholder={chat?.isMain ? "Ask about past conversations..." : "Ask about your documents..."}
+            placeholder={chat.isMain ? "Ask about past conversations..." : "Ask about your documents..."}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && sendMessage()}
             disabled={streaming}
-            className="flex-1 px-4 py-3 bg-card border border-border text-card-foreground placeholder:text-muted-foreground disabled:opacity-50"
+            className="flex-1 px-5 py-3 bg-card border border-border text-card-foreground placeholder:text-muted-foreground disabled:opacity-50 rounded-full focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm"
           />
           <button
             onClick={sendMessage}
             disabled={streaming || !input.trim()}
-            className="px-6 py-3 bg-primary text-primary-foreground hover:bg-accent transition-colors font-medium disabled:opacity-50"
+            className="flex items-center justify-center w-12 h-12 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed rounded-full shadow-md hover:shadow-lg group"
+            title="Send Message"
           >
-            {streaming ? "..." : "Send"}
+            {streaming ? (
+              <span className="w-2 h-2 bg-current rounded-full animate-bounce"></span>
+            ) : (
+              <SendHorizontalIcon size={20} className="ml-1" />
+            )}
           </button>
         </div>
       </div>

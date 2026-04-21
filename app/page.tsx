@@ -2,25 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ConvexHttpClient } from "convex/browser";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
-
-const convex = new ConvexHttpClient(
-  process.env.NEXT_PUBLIC_CONVEX_URL || "https://superb-bison-966.convex.cloud"
-);
-
-interface Chat {
-  _id: string;
-  title: string;
-  isMain: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
+import MoonIcon from "../components/icons/moon-icon";
+import BulbSvg from "../components/icons/bulb-svg";
 
 export default function Home() {
   const router = useRouter();
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [loading, setLoading] = useState(true);
+  const chats = useQuery(api.chats.list);
+  const createChatMutation = useMutation(api.chats.create);
+  const createMainChatMutation = useMutation(api.chatIndex.createMainChat);
+
   const [darkMode, setDarkMode] = useState(false);
   const [newChatTitle, setNewChatTitle] = useState("");
   const [mounted, setMounted] = useState(false);
@@ -36,34 +28,12 @@ export default function Home() {
     }
   }, []);
 
+  // Auto-create main chat if it doesn't exist
   useEffect(() => {
-    loadChats();
-  }, []);
-
-  const loadChats = async () => {
-    try {
-      let allChats = await convex.query(api.chats.list);
-      
-      const mainChat = allChats.find((c: Chat) => c.isMain);
-      if (!mainChat) {
-        await convex.mutation(api.chatIndex.createMainChat, {});
-        allChats = await convex.query(api.chats.list);
-      }
-      
-      const main = allChats.find((c: Chat) => c.isMain);
-      const others = allChats.filter((c: Chat) => !c.isMain).sort((a: Chat, b: Chat) => b.updatedAt - a.updatedAt);
-      
-      if (main) {
-        setChats([main, ...others]);
-      } else {
-        setChats(others);
-      }
-    } catch (error) {
-      console.error("Failed to load chats:", error);
-    } finally {
-      setLoading(false);
+    if (chats && !chats.find((c) => c.isMain)) {
+      createMainChatMutation();
     }
-  };
+  }, [chats, createMainChatMutation]);
 
   const toggleTheme = () => {
     const newMode = !darkMode;
@@ -78,9 +48,10 @@ export default function Home() {
   };
 
   const createNewChat = async () => {
-    const title = newChatTitle.trim() || `Chat ${chats.length}`;
+    const title = newChatTitle.trim() || `Chat ${(chats?.length ?? 0)}`;
     try {
-      const chatId = await convex.mutation(api.chats.create, { title });
+      const chatId = await createChatMutation({ title });
+      setNewChatTitle("");
       router.push(`/chat/${chatId}`);
     } catch (error) {
       console.error("Failed to create chat:", error);
@@ -102,35 +73,62 @@ export default function Home() {
   if (!mounted) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        Loading...
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        Loading...
-      </div>
-    );
-  }
+  // Separate main chat from standard chats
+  const standardChats = chats
+    ? chats.filter((c) => !c.isMain).sort((a, b) => b.updatedAt - a.updatedAt)
+    : null;
+    
+  const mainChat = chats ? chats.find((c) => c.isMain) : null;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">NotebookReader</h1>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+            <span className="text-primary-foreground text-sm font-bold">N</span>
+          </div>
+          <h1 className="text-xl font-semibold">NotebookReader</h1>
+        </div>
         <button
           onClick={toggleTheme}
-          className="w-10 h-10 flex items-center justify-center bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors rounded-lg group"
+          title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
         >
-          {darkMode ? "☀️" : "🌙"}
+          {darkMode ? (
+            <BulbSvg size={20} className="text-amber-400 group-hover:text-amber-300" />
+          ) : (
+            <MoonIcon size={20} className="text-slate-600 group-hover:text-slate-800" />
+          )}
         </button>
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-8">
-        <div className="mb-8">
-          <h2 className="text-2xl font-semibold mb-2">Your Chats</h2>
-          <p className="text-muted-foreground">Select a chat or create a new one</p>
+        {mainChat && (
+          <div className="mb-10">
+            <button
+              onClick={() => router.push(`/chat/${mainChat._id}`)}
+              className="w-full flex items-center justify-between p-6 bg-primary/10 border border-primary/20 rounded-xl hover:bg-primary/15 transition-all text-left relative overflow-hidden group"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none" />
+              <div>
+                <h2 className="text-xl font-semibold text-primary mb-1">Global Search Assistant</h2>
+                <p className="text-sm text-primary/80">Search your past conversations, ask questions across documents, and navigate your chats.</p>
+              </div>
+              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <span className="text-primary text-xl">&rarr;</span>
+              </div>
+            </button>
+          </div>
+        )}
+
+        <div className="mb-6">
+          <h2 className="text-2xl font-semibold mb-1">Document Chats</h2>
+          <p className="text-muted-foreground text-sm">Upload documents and chat with them independently</p>
         </div>
 
         <div className="flex gap-2 mb-8">
@@ -140,42 +138,46 @@ export default function Home() {
             value={newChatTitle}
             onChange={(e) => setNewChatTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && createNewChat()}
-            className="flex-1 px-4 py-3 bg-card border border-border text-card-foreground placeholder:text-muted-foreground"
+            className="flex-1 px-4 py-2.5 bg-card border border-border text-card-foreground placeholder:text-muted-foreground rounded-lg"
           />
           <button
             onClick={createNewChat}
-            className="px-6 py-3 bg-primary text-primary-foreground hover:bg-accent transition-colors font-medium"
+            className="px-5 py-2.5 bg-primary text-primary-foreground hover:bg-accent transition-colors font-medium rounded-lg"
           >
             New Chat
           </button>
         </div>
 
         <div className="space-y-2">
-          {chats.map((chat) => (
-            <button
-              key={chat._id}
-              onClick={() => router.push(`/chat/${chat._id}`)}
-              className="w-full text-left px-4 py-4 bg-card border border-border hover:bg-secondary transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="font-medium">
-                    {chat.isMain ? "🏠 " : ""}
-                    {chat.title}
-                  </span>
-                  <span className="text-muted-foreground text-sm ml-2">
-                    {formatDate(chat.updatedAt)}
-                  </span>
-                </div>
-                <span className="text-muted-foreground">→</span>
-              </div>
-            </button>
-          ))}
-
-          {chats.length === 0 && (
+          {standardChats === null ? (
+            <div className="text-center py-12 text-muted-foreground">Loading chats...</div>
+          ) : standardChats.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
-              No chats yet. Create one to get started!
+              No document chats yet. Create one to get started!
             </div>
+          ) : (
+            standardChats.map((chat) => (
+              <button
+                key={chat._id}
+                onClick={() => router.push(`/chat/${chat._id}`)}
+                className="w-full text-left px-4 py-3.5 bg-card border border-border hover:border-primary/40 hover:bg-secondary transition-all rounded-lg group"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-muted-foreground/40" />
+                    <span className="font-medium">
+                      {chat.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-muted-foreground text-sm">
+                      {formatDate(chat.updatedAt)}
+                    </span>
+                    <span className="text-muted-foreground group-hover:text-primary transition-colors">&rarr;</span>
+                  </div>
+                </div>
+              </button>
+            ))
           )}
         </div>
       </main>
