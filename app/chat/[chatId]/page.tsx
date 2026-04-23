@@ -56,14 +56,6 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat?.messages, streamingContent]);
 
-  useEffect(() => {
-    // Clear the main chat history entirely whenever you navigate to it
-    // making it a truly transient search bar
-    if (chat?.isMain && chatId) {
-      clearMessages({ chatId: chatId as Id<"chats"> }).catch(console.error);
-    }
-  }, [chat?.isMain, chatId, clearMessages]);
-
   const toggleTheme = () => {
     const newMode = !darkMode;
     setDarkMode(newMode);
@@ -92,11 +84,6 @@ export default function ChatPage() {
     setStreamingContent("");
 
     try {
-      // For the transient main chat, clear previous query/answer before taking the new one
-      if (chat?.isMain) {
-        await clearMessages({ chatId: chatId as Id<"chats"> });
-      }
-
       // Save user message immediately (before streaming) so it's not lost
       await addMessage({
         chatId: chatId as Id<"chats">,
@@ -361,6 +348,16 @@ export default function ChatPage() {
           </div>
           
           <div className="flex items-center gap-2">
+            {chat.isMain && (
+              <button
+                onClick={() => clearMessages({ chatId: chatId as Id<"chats"> })}
+                className="p-2 text-muted-foreground hover:text-foreground transition-colors text-sm font-medium flex items-center gap-1.5 border border-transparent hover:border-border hover:bg-secondary"
+                title="Clear search history"
+              >
+                <TrashIcon size={16} />
+                <span className="hidden sm:inline">Clear</span>
+              </button>
+            )}
             {!chat.isMain && (
               <button
                 onClick={handleDelete}

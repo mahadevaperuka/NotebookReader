@@ -50,5 +50,10 @@ export default defineSchema({
     summary: v.string(),
     summaryEmbedding: v.array(v.float64()),
     lastUpdated: v.number(),
-  }).index("chatId", ["chatId"]),
+  })
+    .index("chatId", ["chatId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "summaryEmbedding",
+      dimensions: 768,
+    }),
 });

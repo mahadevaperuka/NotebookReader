@@ -5,13 +5,6 @@ import { generateEmbedding } from "./ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
-// Keep cosineSimilarity for chatIndex search (no vector index on that table yet)
-function cosineSimilarity(a: number[], b: number[]): number {
-  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
-  const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-  const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-  return dotProduct / (magnitudeA * magnitudeB);
-}
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -39,7 +32,7 @@ export async function* streamChat(messages: ChatMessage[], context: ChatContext)
     return;
   }
 
-  const intent = detectIntent(userMessage);
+  const intent = await detectIntent(userMessage);
   if (intent.type === "list_documents") {
     yield* handleListDocuments(context.documentIds);
     return;
@@ -58,7 +51,7 @@ export async function* streamChat(messages: ChatMessage[], context: ChatContext)
   yield* await handleDocumentSearch(userMessage, context);
 }
 
-function detectIntent(message: string): { type: string; query?: string } {
+function detectIntentFallback(message: string): { type: string; query?: string } {
   const lowerMessage = message.toLowerCase();
 
   if (
@@ -71,10 +64,7 @@ function detectIntent(message: string): { type: string; query?: string } {
     return { type: "list_documents" };
   }
 
-  if (
-    lowerMessage.includes("search") ||
-    lowerMessage.includes("find")
-  ) {
+  if (lowerMessage.includes("search") || lowerMessage.includes("find")) {
     const query = lowerMessage
       .replace(/search\s+(for\s+)?/i, "")
       .replace(/find\s+(for\s+)?/i, "")
@@ -83,6 +73,37 @@ function detectIntent(message: string): { type: string; query?: string } {
   }
 
   return { type: "general" };
+}
+
+async function detectIntent(message: string): Promise<{ type: string; query?: string }> {
+  const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+  try {
+    const res = await fetch(`${ollamaBase}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "llama3.2",
+        prompt: `Classify the following user message into exactly one of these intents:
+- LIST_DOCS: user wants to see a list of uploaded documents
+- SEARCH_DOCS: user wants to search document content for specific information
+- GENERAL: anything else (greetings, help requests, etc.)
+
+Respond with only the intent label, nothing else.
+
+Message: "${message}"
+Intent:`,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const json = await res.json();
+    const label = (json.response ?? "").trim().toUpperCase();
+    if (label === "LIST_DOCS") return { type: "list_documents" };
+    if (label === "SEARCH_DOCS") return { type: "search", query: message };
+    return { type: "general" };
+  } catch {
+    return detectIntentFallback(message);
+  }
 }
 
 async function* handleListDocuments(documentIds: Id<"documents">[]) {
@@ -188,7 +209,8 @@ Answer:`;
 
     yield { type: "thinking", content: "Generating answer..." };
 
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+    const response = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -243,8 +265,9 @@ ${contextHistory ? `Recent conversation:\n${contextHistory}\n` : ""}User: ${mess
 
 Respond helpfully. If they want to ask questions about documents, encourage them to create a chat and add documents to it.`;
 
+  const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   try {
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const response = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -297,12 +320,17 @@ function formatDate(timestamp: number): string {
 async function* handleMainChat(message: string, _conversationHistory: ChatMessage[]) {
   yield { type: "searching", content: "Searching your chat history..." };
 
-  try {
-    const allIndexes = await convex.query(api.chatIndex.searchIndex, {
-      query: message,
-    });
+  const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 
-    if (!allIndexes || allIndexes.length === 0) {
+  try {
+    const queryEmbedding = await generateEmbedding(message);
+
+    const results = await convex.action(api.chatIndex.vectorSearch, {
+      embedding: queryEmbedding,
+      limit: 5,
+    }) as Array<{ chatId: string; title: string; summary: string; keywords: string; score: number }>;
+
+    if (!results || results.length === 0) {
       yield {
         type: "message",
         content:
@@ -311,51 +339,31 @@ async function* handleMainChat(message: string, _conversationHistory: ChatMessag
       return;
     }
 
-    const queryEmbedding = await generateEmbedding(message);
-
-    const scoredChats = allIndexes
-      .map((idx: { chatId: string; keywords: string; summary: string; summaryEmbedding: number[] }) => ({
-        ...idx,
-        score: idx.summaryEmbedding?.length > 0
-          ? cosineSimilarity(queryEmbedding, idx.summaryEmbedding)
-          : 0,
-      }))
-      .filter((c: { score: number }) => c.score > 0.50)
-      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
-      .slice(0, 3);
-
-    if (scoredChats.length === 0) {
-      yield {
-        type: "message",
-        content:
-          "I couldn't find any chats that match that topic. Would you like to start a new chat about this?",
-      };
-      return;
-    }
-
-    const chatList = scoredChats
-      .map((c: { summary: string; keywords: string; chatId: string; score: number }, i: number) => {
+    const chatList = results
+      .map((c, i) => {
         const scorePercent = Math.round(c.score * 100);
-        return `Option ${i + 1}:\n   Summary: ${c.summary}\n   Keywords: ${c.keywords}\n   ID: ${c.chatId}\n   Relevance Score: ${scorePercent}%`;
+        return `Option ${i + 1}:\n  Title: ${c.title}\n  Summary: ${c.summary}\n  Keywords: ${c.keywords}\n  ID: ${c.chatId}\n  Relevance: ${scorePercent}%`;
       })
       .join("\n\n");
 
     const redirectPrompt = `Given the user's question: "${message}"
 
-And these potentially relevant chats found from the database:
+Here are the most relevant chats found (pre-ranked by semantic similarity):
 ${chatList}
 
-Create a helpful response that:
-1. Shows only the chats that are ACTUALLY relevant to the user's question. 
-2. If a chat is completely unrelated, DO NOT output it at all.
-3. For the relevant ones, explain briefly why they are relevant and offer a clickable URL to switch to them.
+Write a helpful response in markdown that:
+1. Only includes chats that are genuinely relevant to the question — skip any that are unrelated.
+2. Formats each relevant chat as a card like this:
 
-Format your response exactly as normal markdown text.
-Do NOT use ANY system tags like FOUND_CHATS: or START_NEW:. Write naturally in markdown.
-Make sure the links use the exact ID format: [Chat Title](/chat/the_chat_id).
+### [Chat Title Here](/chat/the_chat_id)
+> One sentence explaining why this chat is relevant.
+**Topics:** keywords here
+
+3. After the cards, add a brief 1-sentence closing line.
+4. Do NOT use system tags or preamble. Start directly with the first card (or an apology if none are relevant).
 `;
 
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const response = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
