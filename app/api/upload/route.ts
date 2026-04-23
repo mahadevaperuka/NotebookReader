@@ -5,30 +5,58 @@ import { chunkText } from "../../../lib/pdf";
 import { generateBatchEmbeddings } from "../../../lib/ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 
 interface Chunk {
   chunkText: string;
   chunkIndex: number;
 }
 
+async function extractText(file: File): Promise<string> {
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  if (ext === "pdf") {
+    const pdfParse = (await import("pdf-parse")).default;
+    const data = await pdfParse(buffer);
+    return data.text;
+  }
+
+  if (ext === "docx") {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  }
+
+  if (ext === "txt" || ext === "md") {
+    return buffer.toString("utf-8");
+  }
+
+  throw new Error(`Unsupported file type: .${ext}`);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const text = formData.get("text") as string;
-    const filename = formData.get("filename") as string;
+    const file = formData.get("file") as File | null;
     const chatId = formData.get("chatId") as string;
 
-    if (!text || !filename) {
-      return NextResponse.json({ error: "Text and filename required" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ error: "File required" }, { status: 400 });
+    }
+
+    const text = await extractText(file);
+
+    if (!text.trim()) {
+      return NextResponse.json({ error: "Could not extract text from file" }, { status: 400 });
     }
 
     const chunks = chunkText(text) as Chunk[];
-
     const chunkTexts = chunks.map((c: Chunk) => c.chunkText);
     const embeddings = await generateBatchEmbeddings(chunkTexts);
 
     const documentId = await convex.mutation(api.documents.create, {
-      filename: filename,
+      filename: file.name,
       content: text,
     });
 
@@ -46,44 +74,35 @@ export async function POST(req: NextRequest) {
 Document content preview:
 ${text.substring(0, 2000)}`;
 
-    const keywordsResponse = await fetch("http://localhost:11434/api/generate", {
+    const keywordsResponse = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama3.2",
-        prompt: keywordsPrompt,
-        stream: false,
-      }),
+      body: JSON.stringify({ model: "llama3.2", prompt: keywordsPrompt, stream: false }),
     });
 
     const keywordsData = await keywordsResponse.json();
-    const keywords = keywordsData.response?.trim() || filename;
+    const keywords = keywordsData.response?.trim() || file.name;
 
     const summaryPrompt = `Create a brief 1-2 sentence summary of what this document is about.
 
 Document content preview:
 ${text.substring(0, 2000)}`;
 
-    const summaryResponse = await fetch("http://localhost:11434/api/generate", {
+    const summaryResponse = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama3.2",
-        prompt: summaryPrompt,
-        stream: false,
-      }),
+      body: JSON.stringify({ model: "llama3.2", prompt: summaryPrompt, stream: false }),
     });
 
     const summaryData = await summaryResponse.json();
-    const summary = summaryData.response?.trim() || filename;
+    const summary = summaryData.response?.trim() || file.name;
 
     const summaryForEmbedding = `Chat about: ${keywords}. Summary: ${summary}`;
     const summaryEmbedding = await generateBatchEmbeddings([summaryForEmbedding]);
 
-    let chatTitle = filename.replace(".pdf", "");
-    chatTitle = chatTitle
-      .replace(/[-_]/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    let chatTitle = file.name.replace(new RegExp(`\\.${ext}$`), "");
+    chatTitle = chatTitle.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
     if (chatId) {
       await convex.mutation(api.chats.addDocument, {
@@ -93,10 +112,7 @@ ${text.substring(0, 2000)}`;
 
       const existingChat = await convex.query(api.chats.getById, { id: chatId as any });
       if (existingChat && !existingChat.title) {
-        await convex.mutation(api.chats.updateTitle, {
-          id: chatId as any,
-          title: chatTitle,
-        });
+        await convex.mutation(api.chats.updateTitle, { id: chatId as any, title: chatTitle });
       }
 
       await convex.mutation(api.chatIndex.updateIndex, {
@@ -107,14 +123,10 @@ ${text.substring(0, 2000)}`;
       });
     }
 
-    return NextResponse.json({
-      documentId,
-      chunkCount: chunks.length,
-      keywords,
-      summary,
-    });
+    return NextResponse.json({ documentId, chunkCount: chunks.length, keywords, summary });
   } catch (error) {
     console.error("Upload error:", error);
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Upload failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

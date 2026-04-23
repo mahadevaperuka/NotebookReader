@@ -36,8 +36,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       const chat = await convex.query(api.chats.getById, { id: chatId as any });
       if (chat) {
         isMain = chat.isMain || false;
+        // Exclude the last message — it's the current user question already saved to Convex
+        // before this request was made, so including it would duplicate it in the prompt.
+        const priorMessages = chat.messages.slice(0, -1);
         conversationHistory = [
-          ...chat.messages.map((m: any) => ({ role: m.role as "user" | "assistant", content: m.content })),
+          ...priorMessages.map((m: any) => ({ role: m.role as "user" | "assistant", content: m.content })),
           ...conversationHistory,
         ];
       }

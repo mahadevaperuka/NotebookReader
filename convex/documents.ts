@@ -46,3 +46,27 @@ export const remove = mutation({
     await ctx.db.delete(args.id);
   },
 });
+
+export const clearAll = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const tables = ["documents", "chunks", "messages", "chatDocuments", "chatIndex"] as const;
+
+    for (const table of tables) {
+      const rows = await ctx.db.query(table).collect();
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+      }
+    }
+
+    // Delete all non-main chats; reset main chat
+    const chats = await ctx.db.query("chats").collect();
+    for (const chat of chats) {
+      if (chat.isMain) {
+        await ctx.db.patch(chat._id, { updatedAt: Date.now() });
+      } else {
+        await ctx.db.delete(chat._id);
+      }
+    }
+  },
+});

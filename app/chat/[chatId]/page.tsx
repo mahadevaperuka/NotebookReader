@@ -5,7 +5,6 @@ import { useRouter, useParams } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
-import { extractTextFromPDF } from "../../../lib/pdf-client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SendHorizontalIcon from "../../../components/icons/send-horizontal-icon";
@@ -36,9 +35,11 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [darkMode, setDarkMode] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploadPhase, setUploadPhase] = useState<"idle" | "reading" | "uploading" | "done">("idle");
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [previewDoc, setPreviewDoc] = useState<{ filename: string; content: string } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -171,22 +172,18 @@ export default function ChatPage() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      alert("Please select a PDF file");
+  const processFile = async (file: File) => {
+    const allowed = [".pdf", ".docx", ".txt", ".md"];
+    const ext = "." + file.name.split(".").pop()?.toLowerCase();
+    if (!allowed.includes(ext)) {
+      alert(`Unsupported file type. Allowed: ${allowed.join(", ")}`);
       return;
     }
 
-    setUploading(true);
+    setUploadPhase("uploading");
     try {
-      const text = await extractTextFromPDF(file);
-
       const formData = new FormData();
-      formData.append("text", text);
-      formData.append("filename", file.name);
+      formData.append("file", file);
       formData.append("chatId", chatId);
 
       const response = await fetch("/api/upload", {
@@ -194,18 +191,32 @@ export default function ChatPage() {
         body: formData,
       });
 
-      if (!response.ok) throw new Error("Upload failed");
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error ?? "Upload failed");
+      }
 
-      const result = await response.json();
-      console.log("Upload result:", result);
-
-      // No need for manual reload — Convex hooks auto-update
+      setUploadPhase("done");
+      setTimeout(() => setUploadPhase("idle"), 1500);
     } catch (error) {
       console.error("Upload error:", error);
-      alert("Failed to upload file");
-    } finally {
-      setUploading(false);
+      alert(error instanceof Error ? error.message : "Failed to upload file");
+      setUploadPhase("idle");
     }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    await processFile(file);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) await processFile(file);
   };
 
   const goHome = () => router.push("/");
@@ -317,7 +328,17 @@ export default function ChatPage() {
       </aside>
 
       {/* MAIN CHAT */}
-      <main className="flex-1 flex flex-col min-w-0">
+      <main
+        className="flex-1 flex flex-col min-w-0 relative"
+        onDragOver={(e) => { e.preventDefault(); if (!chat.isMain && uploadPhase === "idle") setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+      >
+        {dragOver && (
+          <div className="absolute inset-0 z-20 border-4 border-dashed border-[#3674B5] dark:border-[#578FCA] bg-primary/5 flex items-center justify-center pointer-events-none">
+            <div className="text-xl font-bold text-primary">Drop PDF to upload</div>
+          </div>
+        )}
         <header className="border-b border-border px-6 py-3 flex items-center justify-between shrink-0 bg-background/80 backdrop-blur-md z-10">
           <div className="flex items-center gap-4">
             <button
@@ -386,12 +407,16 @@ export default function ChatPage() {
           <div className="max-w-3xl mx-auto w-full">
             {chat.documents && chat.documents.length > 0 && (
               <div className="mb-6 p-3 bg-card border border-border shadow-sm">
-                <div className="text-sm font-medium mb-2 text-muted-foreground">Documents referenced</div>
+                <div className="text-sm font-medium mb-2 text-muted-foreground">Documents referenced — click to preview</div>
                 <div className="flex flex-wrap gap-2">
                   {chat.documents.map((doc: any, i: number) => (
-                    <span key={i} className="px-3 py-1 bg-primary/10 text-primary text-sm font-medium border border-primary/20">
+                    <button
+                      key={i}
+                      onClick={() => setPreviewDoc({ filename: doc.filename, content: doc.content })}
+                      className="px-3 py-1 bg-primary/10 text-primary text-sm font-medium border border-primary/20 hover:bg-primary/20 transition-colors"
+                    >
                       {doc.filename}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -458,18 +483,26 @@ export default function ChatPage() {
         {/* INPUT AREA */}
         <div className="border-t border-border px-6 py-4 shrink-0 bg-background/80 backdrop-blur-md">
           <div className="flex gap-3 max-w-3xl mx-auto w-full">
-            <label className="flex items-center justify-center w-12 h-12 shrink-0 bg-card text-foreground cursor-pointer border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all group" title="Upload Document">
-              {uploading ? (
-                <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              ) : (
-                <UploadIcon size={20} className="group-hover:scale-110 transition-transform" />
+            <label
+              className={`flex flex-col items-center justify-center w-12 h-12 shrink-0 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all group ${uploadPhase === "idle" ? "cursor-pointer" : "cursor-default"}`}
+              title={uploadPhase === "uploading" ? "Uploading..." : uploadPhase === "done" ? "Done!" : "Upload PDF, DOCX, TXT, MD"}
+            >
+              {uploadPhase === "idle" && <UploadIcon size={20} className="group-hover:scale-110 transition-transform" />}
+              {uploadPhase === "uploading" && (
+                <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              )}
+              {uploadPhase === "done" && <span className="text-lg leading-none">✓</span>}
+              {uploadPhase !== "idle" && (
+                <span className="text-[8px] font-bold leading-none mt-0.5 uppercase tracking-tight">
+                  {uploadPhase === "uploading" ? "Save" : "Done"}
+                </span>
               )}
               <input
                 type="file"
-                accept=".pdf"
+                accept=".pdf,.docx,.txt,.md"
                 onChange={handleFileUpload}
                 className="hidden"
-                disabled={uploading}
+                disabled={uploadPhase !== "idle"}
               />
             </label>
             <div className="flex-1 relative flex items-center">
@@ -494,6 +527,38 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
+
+      {/* DOCUMENT PREVIEW MODAL */}
+      {previewDoc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setPreviewDoc(null)}
+        >
+          <div
+            className="relative w-full max-w-2xl max-h-[80vh] mx-4 bg-background border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[8px_8px_0px_0px_#3674B5] dark:shadow-[8px_8px_0px_0px_#578FCA] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+              <span className="font-bold truncate pr-4">{previewDoc.filename}</span>
+              <button
+                onClick={() => setPreviewDoc(null)}
+                className="shrink-0 px-3 py-1 border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[2px_2px_0px_0px_#3674B5] dark:shadow-[2px_2px_0px_0px_#578FCA] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all text-sm font-medium"
+              >
+                Close
+              </button>
+            </div>
+            <div className="overflow-y-auto px-5 py-4 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed font-mono">
+              {previewDoc.content.slice(0, 3000)}
+              {previewDoc.content.length > 3000 && (
+                <span className="block mt-4 text-xs text-muted-foreground/60 italic">
+                  … {Math.round((previewDoc.content.length - 3000) / 1000)}k more characters not shown
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

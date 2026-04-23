@@ -43,7 +43,8 @@ export async function* streamChat(messages: ChatMessage[], context: ChatContext)
     return;
   }
 
-  if (intent.type === "general") {
+  // Only use general chat if there are no documents — otherwise always search the docs
+  if (intent.type === "general" && context.documentIds.length === 0) {
     yield* await handleGeneralChat(userMessage, context.conversationHistory);
     return;
   }
