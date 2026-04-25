@@ -4,6 +4,8 @@ import { api } from "../../../convex/_generated/api";
 import { generateBatchEmbeddings } from "../../../lib/ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+const chatModel = process.env.OLLAMA_CHAT_MODEL ?? "llama3.2";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,10 +21,29 @@ export async function POST(req: NextRequest) {
        return NextResponse.json({ success: true, skipped: true });
     }
 
+    // Auto-title: generate a short title from the first user message if still default
+    const needsTitle = chat.title === "New Document Chat" || !chat.title;
+    if (needsTitle) {
+      const firstUserMessage = chat.messages.find((m: any) => m.role === "user");
+      if (firstUserMessage) {
+        const titlePrompt = `Generate a short chat title (4-6 words max) for a conversation that starts with this message. Return only the title, no quotes, no punctuation at the end.\n\nMessage: "${firstUserMessage.content.substring(0, 200)}"`;
+        const titleRes = await fetch(`${ollamaBase}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: chatModel, prompt: titlePrompt, stream: false }),
+        });
+        const titleData = await titleRes.json();
+        const newTitle = titleData.response?.trim().replace(/^["']|["']$/g, "");
+        if (newTitle) {
+          await convex.mutation(api.chats.updateTitle, { id: chatId as any, title: newTitle });
+        }
+      }
+    }
+
     // Focus purely on the most recent context so new topics aren't drowned out by older massive AI paragraphs
     const recentMessages = chat.messages.slice(-4);
     const conversationText = recentMessages
-      .map((m: any) => `${m.role.toUpperCase()}: ${m.content.substring(0, 500)}`) // Cap each message length so user's tiny prompt isn't dwarfed
+      .map((m: any) => `${m.role.toUpperCase()}: ${m.content.substring(0, 500)}`)
       .join("\n\n");
 
     const keywordsPrompt = `Extract 5-10 keywords from this conversation that would help identify what topics were discussed in a search engine. Pay special attention to the MOST RECENT user question at the very bottom. Return just a comma-separated list of keywords.
@@ -30,16 +51,12 @@ export async function POST(req: NextRequest) {
 Conversation:
 ${conversationText.substring(0, 4000)}`;
 
-    const keywordsResponse = await fetch("http://localhost:11434/api/generate", {
+    const keywordsResponse = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama3.2",
-        prompt: keywordsPrompt,
-        stream: false,
-      }),
+      body: JSON.stringify({ model: chatModel, prompt: keywordsPrompt, stream: false }),
     });
-    
+
     if (!keywordsResponse.ok) throw new Error("Ollama generation failed.");
     const keywordsData = await keywordsResponse.json();
     const keywords = keywordsData.response?.trim() || chat.title;
@@ -49,14 +66,10 @@ ${conversationText.substring(0, 4000)}`;
 Conversation:
 ${conversationText.substring(0, 4000)}`;
 
-    const summaryResponse = await fetch("http://localhost:11434/api/generate", {
+    const summaryResponse = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama3.2",
-        prompt: summaryPrompt,
-        stream: false,
-      }),
+      body: JSON.stringify({ model: chatModel, prompt: summaryPrompt, stream: false }),
     });
     const summaryData = await summaryResponse.json();
     const summary = summaryData.response?.trim() || chat.title;

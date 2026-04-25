@@ -19,6 +19,10 @@ export default defineSchema({
       vectorField: "embedding",
       dimensions: 768,
       filterFields: ["documentId"],
+    })
+    .searchIndex("search_text", {
+      searchField: "chunkText",
+      filterFields: ["documentId"],
     }),
 
   chats: defineTable({

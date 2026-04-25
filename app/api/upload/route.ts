@@ -3,9 +3,11 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api";
 import { chunkText } from "../../../lib/pdf";
 import { generateBatchEmbeddings } from "../../../lib/ollama";
+import mammoth from "mammoth";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+const chatModel = process.env.OLLAMA_CHAT_MODEL ?? "llama3.2";
 
 interface Chunk {
   chunkText: string;
@@ -17,13 +19,13 @@ async function extractText(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer());
 
   if (ext === "pdf") {
-    const pdfParse = (await import("pdf-parse")).default;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse/lib/pdf-parse");
     const data = await pdfParse(buffer);
     return data.text;
   }
 
   if (ext === "docx") {
-    const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ buffer });
     return result.value;
   }
@@ -77,7 +79,7 @@ ${text.substring(0, 2000)}`;
     const keywordsResponse = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "llama3.2", prompt: keywordsPrompt, stream: false }),
+      body: JSON.stringify({ model: chatModel, prompt: keywordsPrompt, stream: false }),
     });
 
     const keywordsData = await keywordsResponse.json();
@@ -91,7 +93,7 @@ ${text.substring(0, 2000)}`;
     const summaryResponse = await fetch(`${ollamaBase}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "llama3.2", prompt: summaryPrompt, stream: false }),
+      body: JSON.stringify({ model: chatModel, prompt: summaryPrompt, stream: false }),
     });
 
     const summaryData = await summaryResponse.json();

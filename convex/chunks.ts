@@ -74,6 +74,37 @@ type ChunkSearchResult = {
   score: number;
 };
 
+export const keywordSearch = query({
+  args: {
+    query: v.string(),
+    documentIds: v.optional(v.array(v.id("documents"))),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ chunkText: string; documentId: Id<"documents"> }[]> => {
+    const limit = args.limit ?? 10;
+    const hasFilter = args.documentIds && args.documentIds.length > 0;
+
+    if (hasFilter) {
+      const results = await Promise.all(
+        args.documentIds!.map((docId) =>
+          ctx.db
+            .query("chunks")
+            .withSearchIndex("search_text", (q) =>
+              q.search("chunkText", args.query).eq("documentId", docId)
+            )
+            .take(limit)
+        )
+      );
+      return results.flat().slice(0, limit);
+    }
+
+    return ctx.db
+      .query("chunks")
+      .withSearchIndex("search_text", (q) => q.search("chunkText", args.query))
+      .take(limit);
+  },
+});
+
 export const searchSimilar = action({
   args: {
     embedding: v.array(v.float64()),

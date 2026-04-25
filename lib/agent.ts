@@ -4,6 +4,7 @@ import { Id } from "../convex/_generated/dataModel";
 import { generateEmbedding } from "./ollama";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL ?? "llama3.2";
 
 
 export interface ChatMessage {
@@ -83,11 +84,13 @@ async function detectIntent(message: string): Promise<{ type: string; query?: st
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3.2",
+        model: CHAT_MODEL,
         prompt: `Classify the following user message into exactly one of these intents:
-- LIST_DOCS: user wants to see a list of uploaded documents
-- SEARCH_DOCS: user wants to search document content for specific information
-- GENERAL: anything else (greetings, help requests, etc.)
+- LIST_DOCS: user ONLY wants a bare list of filenames (e.g. "what files are uploaded?", "show me the documents")
+- SEARCH_DOCS: user wants to find or read information FROM a document — includes asking about content, people, roles, skills, experience, or any specific topic
+- GENERAL: greetings, meta questions, or help requests unrelated to any document
+
+IMPORTANT: Any question that asks about a person, topic, role, skill, or detail found IN a document is SEARCH_DOCS, even if the word "resume", "document", or "file" appears in the question.
 
 Respond with only the intent label, nothing else.
 
@@ -146,16 +149,25 @@ async function* handleDocumentSearch(
     yield { type: "searching", content: "Searching documents..." };
 
     const documentIds = context.documentIds;
+    const docFilter = documentIds.length > 0 ? { documentIds: documentIds as Id<"documents">[] } : {};
 
-    // Generate embedding for the search query
-    const queryEmbedding = await generateEmbedding(query);
+    // Run vector search and keyword search in parallel
+    const [vectorResults, keywordResults] = await Promise.all([
+      generateEmbedding(query).then((embedding) =>
+        convex.action(api.chunks.searchSimilar, { embedding, ...docFilter, limit: 8 })
+      ),
+      convex.query(api.chunks.keywordSearch, { query, ...docFilter, limit: 8 }),
+    ]);
 
-    // Use Convex native vector search instead of loading all chunks into memory
-    const results: Array<{ chunkText: string }> = await convex.action(api.chunks.searchSimilar, {
-      embedding: queryEmbedding,
-      ...(documentIds.length > 0 ? { documentIds: documentIds as Id<"documents">[] } : {}),
-      limit: 5,
-    });
+    // Merge and deduplicate by chunkText, vector results first (higher semantic relevance)
+    const seen = new Set<string>();
+    const results: Array<{ chunkText: string }> = [];
+    for (const r of [...(vectorResults ?? []), ...(keywordResults ?? [])]) {
+      if (!seen.has(r.chunkText)) {
+        seen.add(r.chunkText);
+        results.push(r);
+      }
+    }
 
     if (!results || results.length === 0) {
       // Fallback: check if there are any documents at all
@@ -187,24 +199,21 @@ async function* handleDocumentSearch(
       : "Search across all available documents.";
 
     const contextText = results
-      .map((r, i) => `[Context ${i + 1}]: ${r.chunkText}`)
-      .join("\n\n");
+      .map((r) => r.chunkText)
+      .join("\n\n---\n\n");
 
-    const prompt = `You are a helpful assistant that answers questions based on documents in a conversation.
+    const prompt = `You are an expert assistant answering questions about a document.
+${contextHistory ? `\nRecent conversation:\n${contextHistory}\n` : ""}
+Question: ${message}
 
-${documentInfo}
-
-Conversation History:
-${contextHistory ? contextHistory + "\n" : ""}User's Current Question: ${message}
-
-Available Context from Documents:
+Relevant excerpts from the document:
 ${contextText}
 
 Instructions:
-- Answer based ONLY on the provided context
-- If the context doesn't contain enough information, say so clearly
-- Reference relevant sections when possible
-- Keep your answer concise but informative
+- CRITICAL: If the question contains explicit output constraints (e.g. "just give X", "one word", "no extra details", "in one sentence"), follow them exactly — do not add extra explanation.
+- Write a direct answer using the information above. Synthesise naturally — never say "Context 1" or "the excerpts".
+- If the excerpts only partially answer the question, state what was found and what is missing.
+- Only use markdown formatting if the question asks for a detailed or structured answer.
 
 Answer:`;
 
@@ -215,7 +224,7 @@ Answer:`;
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3.2",
+        model: CHAT_MODEL,
         prompt,
         stream: true,
       }),
@@ -272,7 +281,7 @@ Respond helpfully. If they want to ask questions about documents, encourage them
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3.2",
+        model: CHAT_MODEL,
         prompt,
         stream: true,
       }),
@@ -368,7 +377,7 @@ Write a helpful response in markdown that:
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3.2",
+        model: CHAT_MODEL,
         prompt: redirectPrompt,
         stream: true,
       }),

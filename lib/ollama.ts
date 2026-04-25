@@ -1,12 +1,14 @@
 import { Ollama } from "ollama";
 
 const ollama = new Ollama({
-  host: "http://localhost:11434",
+  host: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
 });
+
+export const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text";
 
 export async function generateEmbedding(text: string): Promise<number[]> {
   const response = await ollama.embeddings({
-    model: "nomic-embed-text",
+    model: EMBED_MODEL,
     prompt: text,
   });
   return response.embedding;

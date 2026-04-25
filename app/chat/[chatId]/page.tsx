@@ -30,6 +30,7 @@ export default function ChatPage() {
   const deleteChatMutation = useMutation(api.chats.deleteChat);
   const createChatMutation = useMutation(api.chats.create);
   const clearMessages = useMutation(api.chats.clearMessages);
+  const removeDocument = useMutation(api.chats.removeDocument);
 
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -410,13 +411,25 @@ export default function ChatPage() {
                 <div className="text-sm font-medium mb-2 text-muted-foreground">Documents referenced — click to preview</div>
                 <div className="flex flex-wrap gap-2">
                   {chat.documents.map((doc: any, i: number) => (
-                    <button
-                      key={i}
-                      onClick={() => setPreviewDoc({ filename: doc.filename, content: doc.content })}
-                      className="px-3 py-1 bg-primary/10 text-primary text-sm font-medium border border-primary/20 hover:bg-primary/20 transition-colors"
-                    >
-                      {doc.filename}
-                    </button>
+                    <div key={i} className="flex items-center bg-primary/10 border border-primary/20 group">
+                      <button
+                        onClick={() => setPreviewDoc({ filename: doc.filename, content: doc.content })}
+                        className="px-3 py-1 text-primary text-sm font-medium hover:bg-primary/20 transition-colors"
+                      >
+                        {doc.filename}
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Remove "${doc.filename}" from this chat?`)) {
+                            removeDocument({ chatId: chatId as Id<"chats">, documentId: doc._id });
+                          }
+                        }}
+                        className="px-2 py-1 text-primary/50 hover:text-destructive hover:bg-destructive/10 transition-colors text-sm leading-none"
+                        title="Remove document"
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>

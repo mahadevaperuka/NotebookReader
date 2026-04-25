@@ -125,6 +125,36 @@ export const clearMessages = mutation({
   },
 });
 
+export const removeDocument = mutation({
+  args: {
+    chatId: v.id("chats"),
+    documentId: v.id("documents"),
+  },
+  handler: async (ctx, args) => {
+    // Remove the chatDocuments link
+    const link = await ctx.db
+      .query("chatDocuments")
+      .withIndex("chatId", (q) => q.eq("chatId", args.chatId))
+      .filter((q) => q.eq(q.field("documentId"), args.documentId))
+      .first();
+
+    if (link) await ctx.db.delete(link._id);
+
+    // Delete the document's chunks
+    const chunks = await ctx.db
+      .query("chunks")
+      .withIndex("documentId", (q) => q.eq("documentId", args.documentId))
+      .collect();
+
+    for (const chunk of chunks) {
+      await ctx.db.delete(chunk._id);
+    }
+
+    // Delete the document itself
+    await ctx.db.delete(args.documentId);
+  },
+});
+
 export const addDocument = mutation({
   args: {
     chatId: v.id("chats"),

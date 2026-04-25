@@ -5,8 +5,8 @@ export interface Chunk {
 
 export function chunkText(
   text: string,
-  chunkSize: number = 500,
-  overlap: number = 50
+  chunkSize: number = 900,
+  overlap: number = 120
 ): Chunk[] {
   const chunks: Chunk[] = [];
   let start = 0;
