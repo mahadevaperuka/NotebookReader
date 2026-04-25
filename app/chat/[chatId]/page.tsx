@@ -37,14 +37,12 @@ export default function ChatPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [darkMode, setDarkMode] = useState(false);
   const [uploadPhase, setUploadPhase] = useState<"idle" | "reading" | "uploading" | "done">("idle");
-  const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [previewDoc, setPreviewDoc] = useState<{ filename: string; content: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setMounted(true);
     if (typeof window !== "undefined") {
       const savedTheme = localStorage.getItem("theme");
       if (savedTheme === "dark" || (!savedTheme && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
@@ -94,10 +92,10 @@ export default function ChatPage() {
       });
 
       let fullContent = "";
-      
+
       const response = await fetch(`/api/chat/${chatId}`, {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -126,7 +124,7 @@ export default function ChatPage() {
         const events = buffer.split("\n\n");
         // Keep the last (potentially incomplete) event in the buffer
         buffer = events.pop() || "";
-        
+
         for (const event of events) {
           const line = event.trim();
           if (!line || line === "data: [DONE]") continue;
@@ -236,36 +234,12 @@ export default function ChatPage() {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    
+
     if (days === 0) return "Today";
     if (days === 1) return "Yesterday";
     if (days < 7) return `${days} d`;
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
-
-  if (!mounted) {
-    return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
-
-  if (chat === undefined) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="text-muted-foreground">Loading chat...</div>
-      </div>
-    );
-  }
-
-  if (chat === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="text-muted-foreground">Chat not found</div>
-      </div>
-    );
-  }
 
   // Sort chats for sidebar
   const standardChats = chats
@@ -277,10 +251,17 @@ export default function ChatPage() {
     <div className="h-screen overflow-hidden bg-background text-foreground flex relative">
       {/* SIDEBAR (Desktop) */}
       <aside className={`w-[260px] border-r border-border bg-secondary/20 flex-col shrink-0 ${sidebarOpen ? "hidden md:flex" : "hidden"}`}>
-        <div className="p-4 border-b border-border">
+        <div className="p-4 border-b border-border flex gap-2 items-center">
+          <button
+            onClick={goHome}
+            className="flex items-center justify-center w-10 h-10 shrink-0 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[3px_3px_0px_0px_#3674B5] dark:shadow-[3px_3px_0px_0px_#578FCA] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
+            title="Go to Home"
+          >
+            <ArrowBackIcon size={16} />
+          </button>
           <button
             onClick={createNewChat}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] font-medium active:scale-[0.98] shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all"
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] font-medium shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all"
           >
             <span className="text-xl leading-none font-medium">+</span> New Chat
           </button>
@@ -292,11 +273,10 @@ export default function ChatPage() {
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2">Navigation</div>
               <button
                 onClick={() => router.push(`/chat/${mainChat._id}`)}
-                className={`w-full text-left px-3 py-2 transition-colors flex items-center gap-2 ${
-                  chatId === mainChat._id 
-                    ? "bg-primary/10 text-primary font-medium" 
-                    : "hover:bg-secondary/50 text-foreground"
-                }`}
+                className={`w-full text-left px-3 py-2 transition-colors flex items-center gap-2 ${chatId === mainChat._id
+                  ? "bg-primary/10 text-primary font-medium"
+                  : "hover:bg-secondary/50 text-foreground"
+                  }`}
               >
                 <div className={`w-2 h-2 rounded-full ${chatId === mainChat._id ? "bg-primary" : "bg-primary/40"}`} />
                 <span className="truncate">Search Assistant</span>
@@ -311,11 +291,10 @@ export default function ChatPage() {
                 <button
                   key={c._id}
                   onClick={() => router.push(`/chat/${c._id}`)}
-                  className={`w-full text-left px-3 py-2 transition-colors flex justify-between items-center group ${
-                    chatId === c._id 
-                      ? "bg-secondary text-foreground font-medium" 
-                      : "hover:bg-secondary/50 text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`w-full text-left px-3 py-2 transition-colors flex justify-between items-center group ${chatId === c._id
+                    ? "bg-secondary text-foreground font-medium"
+                    : "hover:bg-secondary/50 text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <span className="truncate flex-1">{c.title || "Untitled Chat"}</span>
                   <span className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pl-2">
@@ -331,7 +310,7 @@ export default function ChatPage() {
       {/* MAIN CHAT */}
       <main
         className="flex-1 flex flex-col min-w-0 relative"
-        onDragOver={(e) => { e.preventDefault(); if (!chat.isMain && uploadPhase === "idle") setDragOver(true); }}
+        onDragOver={(e) => { e.preventDefault(); if (!chat?.isMain && uploadPhase === "idle") setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
       >
@@ -347,7 +326,7 @@ export default function ChatPage() {
               className="p-2 text-muted-foreground hover:text-foreground transition-colors group hidden md:flex border border-transparent hover:border-border hover:bg-secondary"
               title="Toggle Sidebar"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter"><rect x="3" y="3" width="18" height="18"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter"><rect x="3" y="3" width="18" height="18" /><line x1="9" y1="3" x2="9" y2="21" /></svg>
             </button>
             <button
               onClick={goHome}
@@ -357,20 +336,20 @@ export default function ChatPage() {
               <ArrowBackIcon size={20} className="group-hover:-translate-x-0.5 transition-transform" />
             </button>
             <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${chat.isMain ? "bg-primary" : "bg-muted-foreground/40"}`} />
+              <div className={`w-2 h-2 rounded-full ${chat?.isMain ? "bg-primary" : "bg-muted-foreground/40"}`} />
               <h1 className="text-lg font-semibold truncate max-w-[200px] sm:max-w-md">
-                {chat.isMain ? "Global Search Assistant" : chat.title || "Chat"}
+                {chat === undefined ? null : chat?.isMain ? "Global Search Assistant" : chat?.title || "Untitled Chat"}
               </h1>
-              {chat.isMain && (
-                <span className="hidden sm:inline-block text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full font-medium">
+              {chat?.isMain && (
+                <span className="hidden sm:inline-block text-xs px-2 py-0.5 bg-primary/10 text-primary font-medium">
                   Main
                 </span>
               )}
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
-            {chat.isMain && (
+            {chat?.isMain && (
               <button
                 onClick={() => clearMessages({ chatId: chatId as Id<"chats"> })}
                 className="p-2 text-muted-foreground hover:text-foreground transition-colors text-sm font-medium flex items-center gap-1.5 border border-transparent hover:border-border hover:bg-secondary"
@@ -380,7 +359,7 @@ export default function ChatPage() {
                 <span className="hidden sm:inline">Clear</span>
               </button>
             )}
-            {!chat.isMain && (
+            {chat && !chat.isMain && (
               <button
                 onClick={handleDelete}
                 className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors group text-sm font-medium flex items-center gap-2"
@@ -406,7 +385,17 @@ export default function ChatPage() {
 
         <div className="flex-1 overflow-y-auto px-6 py-6 pb-8">
           <div className="max-w-3xl mx-auto w-full">
-            {chat.documents && chat.documents.length > 0 && (
+            {chat === undefined && (
+              <div className="flex items-center justify-center py-32 text-muted-foreground">
+                Loading chat...
+              </div>
+            )}
+            {chat === null && (
+              <div className="flex items-center justify-center py-32 text-muted-foreground">
+                Chat not found
+              </div>
+            )}
+            {chat && chat.documents && chat.documents.length > 0 && (
               <div className="mb-6 p-3 bg-card border border-border shadow-sm">
                 <div className="text-sm font-medium mb-2 text-muted-foreground">Documents referenced — click to preview</div>
                 <div className="flex flex-wrap gap-2">
@@ -435,7 +424,7 @@ export default function ChatPage() {
               </div>
             )}
 
-            {chat.messages?.length === 0 && !streaming && (
+            {chat && chat.messages?.length === 0 && !streaming && (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="w-16 h-16 bg-secondary flex items-center justify-center mb-4">
                   <span className="text-2xl">👋</span>
@@ -450,13 +439,12 @@ export default function ChatPage() {
               </div>
             )}
 
-            {chat.messages?.map((msg: any, i: number) => (
+            {chat?.messages?.map((msg: any, i: number) => (
               <div key={i} className={`mb-6 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[85%] px-5 py-4 ${
-                  msg.role === "user" 
-                    ? "bg-primary text-primary-foreground" 
-                    : "bg-secondary text-secondary-foreground border border-border shadow-sm"
-                }`}>
+                <div className={`max-w-[85%] px-5 py-4 ${msg.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground border border-border shadow-sm"
+                  }`}>
                   {msg.role === "assistant" ? (
                     <div className="prose prose-sm md:prose-base max-w-none prose-p:leading-relaxed prose-pre:bg-black/10 dark:prose-pre:bg-black/40 prose-pre:backdrop-blur-sm prose-a:text-primary dark:prose-a:text-indigo-400 prose-p:text-current prose-headings:text-current prose-strong:text-current prose-li:text-current text-current">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -496,7 +484,7 @@ export default function ChatPage() {
         {/* INPUT AREA */}
         <div className="border-t border-border px-6 py-4 shrink-0 bg-background/80 backdrop-blur-md">
           <div className="flex gap-3 max-w-3xl mx-auto w-full">
-            <label
+            {!chat?.isMain && <label
               className={`flex flex-col items-center justify-center w-12 h-12 shrink-0 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all group ${uploadPhase === "idle" ? "cursor-pointer" : "cursor-default"}`}
               title={uploadPhase === "uploading" ? "Uploading..." : uploadPhase === "done" ? "Done!" : "Upload PDF, DOCX, TXT, MD"}
             >
@@ -517,20 +505,20 @@ export default function ChatPage() {
                 className="hidden"
                 disabled={uploadPhase !== "idle"}
               />
-            </label>
+            </label>}
             <div className="flex-1 relative flex items-center">
               <input
                 type="text"
-                placeholder={chat.isMain ? "Ask about past conversations..." : "Ask a question about your documents..."}
+                placeholder={chat?.isMain ? "Ask about past conversations..." : "Ask a question about your documents..."}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                disabled={streaming}
+                disabled={streaming || !chat}
                 className="w-full pl-5 pr-14 py-3.5 bg-card border border-border text-card-foreground placeholder:text-muted-foreground disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm transition-all"
               />
               <button
                 onClick={sendMessage}
-                disabled={streaming || !input.trim()}
+                disabled={streaming || !input.trim() || !chat}
                 className="absolute right-1.5 z-10 flex items-center justify-center w-9 h-9 shrink-0 bg-card text-foreground font-medium disabled:opacity-50 disabled:cursor-not-allowed border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[2px_2px_0px_0px_#3674B5] dark:shadow-[2px_2px_0px_0px_#578FCA] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
                 title="Send Message"
               >

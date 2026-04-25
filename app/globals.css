@@ -56,6 +56,10 @@
   --color-destructive-foreground: var(--destructive-foreground);
 }
 
+html {
+  font-size: 14px;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

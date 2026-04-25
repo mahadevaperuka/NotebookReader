@@ -89,14 +89,14 @@ export default function Home() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+          <div className="w-8 h-8 bg-primary flex items-center justify-center border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[2px_2px_0px_0px_#3674B5] dark:shadow-[2px_2px_0px_0px_#578FCA]">
             <span className="text-primary-foreground text-sm font-bold">N</span>
           </div>
           <h1 className="text-xl font-semibold">NotebookReader</h1>
         </div>
         <button
           onClick={toggleTheme}
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors rounded-lg group"
+          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors group border border-transparent hover:border-border"
           title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
         >
           {darkMode ? (
@@ -112,14 +112,13 @@ export default function Home() {
           <div className="mb-10">
             <button
               onClick={() => router.push(`/chat/${mainChat._id}`)}
-              className="w-full flex items-center justify-between p-6 bg-primary/10 border border-primary/20 rounded-xl hover:bg-primary/15 transition-all text-left relative overflow-hidden group"
+              className="w-full flex items-center justify-between p-6 bg-primary/10 border-2 border-[#3674B5] dark:border-[#578FCA] shadow-[6px_6px_0px_0px_#3674B5] dark:shadow-[6px_6px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all text-left group"
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none" />
               <div>
                 <h2 className="text-xl font-semibold text-primary mb-1">Global Search Assistant</h2>
                 <p className="text-sm text-primary/80">Search your past conversations, ask questions across documents, and navigate your chats.</p>
               </div>
-              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-10 h-10 bg-primary/20 border border-primary/30 flex items-center justify-center group-hover:bg-primary/30 transition-colors shrink-0 ml-4">
                 <span className="text-primary text-xl">&rarr;</span>
               </div>
             </button>
@@ -138,11 +137,11 @@ export default function Home() {
             value={newChatTitle}
             onChange={(e) => setNewChatTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && createNewChat()}
-            className="flex-1 px-4 py-2.5 bg-card border border-border text-card-foreground placeholder:text-muted-foreground rounded-lg"
+            className="flex-1 px-4 py-2.5 bg-card border border-border text-card-foreground placeholder:text-muted-foreground"
           />
           <button
             onClick={createNewChat}
-            className="px-5 py-2.5 bg-primary text-primary-foreground hover:bg-accent transition-colors font-medium rounded-lg"
+            className="px-5 py-2.5 bg-card text-foreground border-2 border-[#3674B5] dark:border-[#578FCA] font-medium shadow-[4px_4px_0px_0px_#3674B5] dark:shadow-[4px_4px_0px_0px_#578FCA] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all"
           >
             New Chat
           </button>
@@ -160,7 +159,7 @@ export default function Home() {
               <button
                 key={chat._id}
                 onClick={() => router.push(`/chat/${chat._id}`)}
-                className="w-full text-left px-4 py-3.5 bg-card border border-border hover:border-primary/40 hover:bg-secondary transition-all rounded-lg group"
+                className="w-full text-left px-4 py-3.5 bg-card border border-border hover:border-[#3674B5] dark:hover:border-[#578FCA] hover:shadow-[3px_3px_0px_0px_#3674B5] dark:hover:shadow-[3px_3px_0px_0px_#578FCA] hover:bg-secondary transition-all group"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
