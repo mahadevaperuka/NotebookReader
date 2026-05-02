@@ -273,7 +273,7 @@ async function* handleGeneralChat(message: string, conversationHistory: ChatMess
 
 ${contextHistory ? `Recent conversation:\n${contextHistory}\n` : ""}User: ${message}
 
-Respond helpfully. If they want to ask questions about documents, encourage them to create a chat and add documents to it.`;
+Respond directly to what the user just said. Do NOT volunteer extra information, summaries, or follow-ups from earlier in the conversation unless the user explicitly asks. If it's a short acknowledgment (like "ok", "cool", "thanks"), reply briefly and naturally.`;
 
   const ollamaBase = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   try {
